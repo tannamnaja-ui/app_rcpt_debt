@@ -1,0 +1,112 @@
+ให้สร้างระบบ ออกใบแจ้งหนี้อัตโนมัติ
+หน้าแรกให้สร้างหน้า login มี username และ password 
+และให้มีปุ่ม ตั้งค่าการเชื่อมต่อ โดยเมื่อกดเข้าไปตั้งค่า 
+ให้สามารถเลือกได้ว่า จะเชื่อมต่อด้วย MySQL หรือ PostgreSQL
+ให้มีช่องให้ใส่ดังนี้
+IP Server
+Port
+Database
+username
+password
+มีปุ่ม ทดสอบการเชื่อมต่อ 
+มีปุ่ม บันทึกข้อมูลเชื่อมต่อ เมื่อกดปุ่มนี้ให้เด้งกลับไปที่หน้าจอ login
+
+โดย login เข้าใช้งาน ให้ใช้ข้อมูลของฐานข้อมูลที่เชื่อมต่อ 
+จากตาราง officer โดยใช้
+username จาก officer.officer_login_name 
+password จาก officer.officer_login_password_md5(ให้ถอดรหัสก่อน)
+
+และขอให้มีเลือก ห้องทำงาน เป็น drop down โดยนำข้อมูลมาจากตาราง kskdepartment.department where depcode_active='Y' และให้จำค่าได้
+
+โดยมีคุณสมบัติดังนี้
+เลือกกลุ่มสิทธิ select hipdata_code from pttype group by hipdata_code  ให้จำค่าไว้ได้
+หลังจากเลืกกลุ่มสิทธิ ให้สิทธิที่มี hipdata_code นั้น แสดงอีกช่อง และสามารถเลือกสิทธิได้อีกชั้น ให้จำค่าไว้ได้
+เมื่อเลือกสิทธิแล้ว ให้เลือกช่วงวันที่ โดยตั้งต้นให้เป็นวันปัจจุบันทั้งคู่ เมื่อเข้ามา
+และสามารถเลือกรายคนในการออกใบแจ้งหนี้ได้ โดยตั้งต้นให้เลือกทั้งหมดตามการกรองสิทธิข้างบน
+และมีปุ่ม ออกใบแจ้งหนี้ทั้งหมดที่เลือก
+เมื่อกดแล้ว ให้ทุกคนออกใบแจ้งหนี้ได้ ตามคำสั่ง 9 step ดังนี้
+1. ============================================================================
+INSERT INTO opd_opi_fn_tr_list(opd_opi_fn_tr_list_id, opd_opi_fn_tr_date, opd_opi_fn_tr_time, vn, transfer_amount, opd_opi_fn_tr_staff) 
+ SELECT get_serialnumber('opd_opi_fn_tr_list_id'),o.vstdate,o.vsttime,o.vn,v.uc_money, o.staff
+FROM vn_stat v,ovst o
+where v.vn=o.vn
+and o.vn='690608084021'
+2. ============================================================================
+INSERT INTO opd_opi_hos_guid_transfer(opi_guid, hos_guid, vn, opd_opi_fn_tr_list_id)  
+SELECT guid,guid,o.vn,l.opd_opi_fn_tr_list_id
+FROM ovst o,opd_opi_fn_tr_list l
+WHERE o.vn=l.vn
+AND o.vn='690608084021' 
+3. =====================================================================
+INSERT INTO opd_opi_fn_tr_detail(opd_opi_fn_tr_detail_id, opd_opi_fn_tr_list_id, income, pttype, amount_paidst_01, amount_paidst_02, amount_paidst_03, total_amount, amount_paidst_04, process_order, amount_paidst_04a, amount_paidst_04b)  
+SELECT get_serialnumber('opd_opi_fn_tr_detail_id'),l.opd_opi_fn_tr_list_id,op.income,op.pttype,
+CASE WHEN op.paidst='01' THEN SUM(op.sum_price) ELSE '0' END ,
+CASE WHEN op.paidst='02' THEN SUM(op.sum_price) ELSE '0' END ,
+CASE WHEN op.paidst='03' THEN SUM(op.sum_price) ELSE '0' END ,
+SUM(op.sum_price),'0','1000','0','0'
+FROM opitemrece op,opd_opi_fn_tr_list l
+WHERE op.vn=l.vn   
+AND op.vn='690608084021'
+GROUP BY l.opd_opi_fn_tr_list_id,op.income,op.pttype,op.paidst ;
+4.  =============================================================================
+INSERT INTO opd_opi_finance_summary(opd_opi_finance_summary_id, vn, income, total_paidst_01, total_paidst_02, total_paidst_03, total_paidst_04, total_amount, clear_amount, balance_amount, total_balance_01, total_balance_02, total_balance_03, total_balance_04, pttype, status_ok, total_paidst_04a, total_paidst_04b, total_balance_04a, total_amount_a) 
+SELECT get_serialnumber('opd_opi_finance_summary_id'),op.vn,op.income,
+CASE WHEN op.paidst='01' THEN SUM(op.sum_price) ELSE '0' END ,
+CASE WHEN op.paidst='02' THEN SUM(op.sum_price) ELSE '0' END ,
+CASE WHEN op.paidst='03' THEN SUM(op.sum_price) ELSE '0' END ,'0', SUM(op.sum_price),'0',SUM(op.sum_price),
+CASE WHEN op.paidst='01' THEN SUM(op.sum_price) ELSE '0' END ,
+CASE WHEN op.paidst='02' THEN SUM(op.sum_price) ELSE '0' END ,
+CASE WHEN op.paidst='03' THEN SUM(op.sum_price) ELSE '0' END,
+op.pttype,'N','0','0','0',CASE WHEN op.paidst='02' THEN SUM(op.sum_price) ELSE '0' END 
+FROM opitemrece op,opd_opi_fn_tr_list l
+WHERE op.vn=l.vn   
+AND op.vn='690608084021'
+GROUP BY op.pttype,op.vn,op.income,op.paidst;
+5. =============================================================================
+INSERT INTO opd_opi_fn_cr_list(opd_opi_fn_cr_list_id, vn, pttype, opd_opi_fn_cr_date, opd_opi_fn_cr_time, opd_opi_fn_cr_staff, clear_amount, finance_number, status_ok)  
+SELECT get_serialnumber('opd_opi_fn_cr_list_id'),o.vn,o.vstdate,o.vsttime,o.staff,v.uc_money,get_serialnumber('finance_number'),'Y'    
+FROM vn_stat v,ovst o
+where v.vn=o.vn
+AND o.vn='690608084021';
+6. ==============================================================================
+INSERT INTO opd_opi_fn_cr_detail(opd_opi_fn_cr_detail_id, opd_opi_fn_cr_list_id, income, amount_paidst_02, amount_paidst_04, total_amount, original_total_amount)  
+SELECT get_serialnumber('opd_opi_fn_cr_detail_id'),op.income,
+CASE WHEN op.paidst='02' THEN SUM(op.sum_price) ELSE '0' END ,'0',
+CASE WHEN op.paidst='02' THEN SUM(op.sum_price) ELSE '0' END,
+CASE WHEN op.paidst='02' THEN SUM(op.sum_price) ELSE '0' END    
+FROM opitemrece op,opd_opi_fn_tr_list l
+WHERE op.vn=l.vn   
+AND op.vn='690608084021'
+GROUP BY op.income,op.paidst;
+7. ==============================================================================
+INSERT INTO rcpt_debt (debt_id, vn, hn, debt_date, debt_time, staff, amount, pt_type, computer, finance_number, pttype, discount_amount, total_amount, debt_date_time, debt_doc_id, department, special_discount_amount, ofc_paid_amount)
+SELECT get_serialnumber('rcpt_debt_id'),op.vn,op.hn,op.vstdate,op.vsttime,staff --โดยนำ username ไปเทียบกับตาราง officer.officer_login_name แล้วนำ officer.officer_login_name มาใส่,
+CASE WHEN op.paidst='02' THEN SUM(op.sum_price) ELSE '0' END,'OPD','app_rcpt',cr.finance_number,op.pttype,SUM(op.discount),
+CASE WHEN op.paidst='02' THEN SUM(op.sum_price) ELSE '0' END,CONCAT(op.vstdate,' ',op.vsttime),CONCAT(op.pttype, '/', ROW_NUMBER() OVER (ORDER BY op.pttype)) AS run_no,
+'OPD','0','0'
+FROM opitemrece op,opd_opi_fn_cr_list cr
+WHERE op.vn=cr.vn 
+AND op.vn='690608084021'
+GROUP BY op.vn,op.hn,op.vstdate,op.vsttime,op.staff,cr.finance_number,op.pttype,op.paidst  
+8. ==============================================================================
+INSERT INTO rcpt_debt_detail(debt_id, income, amount, discount, total_amount, special_discount)  
+SELECT rp.debt_id,op.income,CASE WHEN op.paidst='02' THEN SUM(op.sum_price) ELSE '0' END,
+SUM(op.discount),CASE WHEN op.paidst='02' THEN SUM(op.sum_price) ELSE '0' END,'0'
+FROM opitemrece op,rcpt_debt rp
+WHERE op.vn=rp.vn 
+AND op.vn='690608084021'
+GROUP BY rp.debt_id,op.income,op.paidst
+
+9.================================================================================
+ถ้า postgres
+update opitemrece  op set finance_number=o.opd_opi_fn_tr_list_id
+from opd_opi_fn_tr_list o  
+where o.vn='690608084021'
+and o.vn=op.vn
+and (op.finance_number is null or op.finance_number='')
+
+ถ้า Mysql
+update opitemrece  op,opd_opi_fn_tr_list o set op.finance_number=o.opd_opi_fn_tr_list_id 
+where o.vn='690608084021'
+and o.vn=op.vn
+and (op.finance_number is null or op.finance_number='')

@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <title>ออกใบแจ้งหนี้ - ระบบออกใบแจ้งหนี้อัตโนมัติ</title>
+    <link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+    <div class="topbar">
+        <div class="topbar-title">🧾 ระบบออกใบแจ้งหนี้อัตโนมัติ</div>
+        <div class="topbar-user">
+            <span id="officerName"></span>
+            <span class="badge" id="departmentBadge"></span>
+            <a href="#" class="btn-link" id="btnLogout">ออกจากระบบ</a>
+        </div>
+    </div>
+
+    <div class="container">
+        <div id="alertBox"></div>
+
+        <div class="card" style="max-width:none;">
+            <h2>เงื่อนไขการค้นหา</h2>
+            <div class="filter-row">
+                <div class="form-group filter-multiselect">
+                    <label for="hipdataToggle">กลุ่มสิทธิ</label>
+                    <div class="multiselect" id="hipdataMultiselect">
+                        <button type="button" class="multiselect-toggle" id="hipdataToggle">
+                            <span class="multiselect-label" id="hipdataLabel">-- เลือกกลุ่มสิทธิ (ไม่เลือก = ทั้งหมด) --</span>
+                            <span class="multiselect-arrow">&#9662;</span>
+                        </button>
+                        <div class="multiselect-panel" id="hipdataPanel"></div>
+                    </div>
+                </div>
+                <div class="form-group filter-multiselect">
+                    <label for="pttypeToggle">สิทธิการรักษา</label>
+                    <div class="multiselect" id="pttypeMultiselect">
+                        <button type="button" class="multiselect-toggle" id="pttypeToggle">
+                            <span class="multiselect-label" id="pttypeLabel">-- เลือกสิทธิการรักษา (ไม่เลือก = ทั้งหมด) --</span>
+                            <span class="multiselect-arrow">&#9662;</span>
+                        </button>
+                        <div class="multiselect-panel" id="pttypePanel"></div>
+                    </div>
+                </div>
+                <div class="form-group filter-hn">
+                    <label for="hnFilter">HN</label>
+                    <input type="text" id="hnFilter" placeholder="ค้นหาด้วย HN" autocomplete="off">
+                </div>
+                <div class="form-group filter-date">
+                    <label for="dateStart">วันที่เริ่มต้น</label>
+                    <input type="date" id="dateStart">
+                </div>
+                <div class="form-group filter-date">
+                    <label for="dateEnd">วันที่สิ้นสุด</label>
+                    <input type="date" id="dateEnd">
+                </div>
+                <div class="form-group filter-time">
+                    <label for="timeStart">เวลาเริ่มต้น</label>
+                    <input type="text" id="timeStart" placeholder="HH:MM:SS" maxlength="8" inputmode="numeric" autocomplete="off">
+                </div>
+                <div class="form-group filter-time">
+                    <label for="timeEnd">เวลาสิ้นสุด</label>
+                    <input type="text" id="timeEnd" placeholder="HH:MM:SS" maxlength="8" inputmode="numeric" autocomplete="off">
+                </div>
+            </div>
+
+            <div class="form-actions">
+                <button type="button" class="btn btn-secondary" id="btnRemember">จำค่าที่เลือกไว้</button>
+                <button type="button" class="btn btn-primary" id="btnSearch">ค้นหา</button>
+                <button type="button" class="btn btn-secondary" id="btnCheckIssued">ตรวจสอบรายชื่อคนที่ออกใบแจ้งหนี้แล้ว</button>
+            </div>
+        </div>
+
+        <div class="card" style="max-width:none;">
+            <h2 class="h2-with-action">
+                <span>รายการผู้ป่วย</span>
+                <button type="button" class="btn btn-success btn-sm" id="btnIssue">ออกใบแจ้งหนี้ทั้งหมดที่เลือก</button>
+            </h2>
+            <div class="pagination-controls page-size-bar">
+                <button type="button" class="btn btn-secondary btn-sm" id="btnSelectAll">เลือกทั้งหมด</button>
+                <button type="button" class="btn btn-secondary btn-sm" id="btnDeselectAll">ไม่เลือกทั้งหมด</button>
+                <label for="pageSize">แสดงหน้าละ</label>
+                <select id="pageSize">
+                    <option value="20">20</option>
+                    <option value="50">50</option>
+                    <option value="100">100</option>
+                    <option value="200">200</option>
+                    <option value="500">500</option>
+                    <option value="1000">1000</option>
+                </select>
+                <button type="button" class="btn btn-secondary btn-sm" id="btnPrevPage">&laquo; ก่อนหน้า</button>
+                <span id="pageIndicator" class="hint"></span>
+                <button type="button" class="btn btn-secondary btn-sm" id="btnNextPage">ถัดไป &raquo;</button>
+            </div>
+            <div class="table-wrap">
+                <table class="data-table" id="patientTable">
+                    <thead>
+                        <tr>
+                            <th>ลำดับ</th>
+                            <th><input type="checkbox" id="checkAll" checked></th>
+                            <th>VN</th>
+                            <th>HN</th>
+                            <th>ชื่อ-สกุล</th>
+                            <th>วันที่-เวลา ที่มารับบริการ</th>
+                            <th>สิทธิ</th>
+                            <th>เลขอนุมัติ (auth_code)</th>
+                            <th class="col-amount">ยอดออกใบแจ้งหนี้</th>
+                            <th>ดำเนินการ</th>
+                        </tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+            <div class="pagination-bar">
+                <div id="patientSummary" class="hint"></div>
+            </div>
+        </div>
+
+        <div class="card" id="resultSection" style="max-width:none; display:none;">
+            <h2>ผลการออกใบแจ้งหนี้</h2>
+            <div class="table-wrap">
+                <table class="data-table" id="resultTable">
+                    <thead>
+                        <tr>
+                            <th>สถานะ</th>
+                            <th>เลขที่ใบแจ้งหนี้ (debt_id)</th>
+                            <th>VN</th>
+                            <th>HN</th>
+                            <th>ชื่อ-สกุล</th>
+                            <th>วันที่-เวลา ที่มารับบริการ</th>
+                            <th>สิทธิ</th>
+                            <th>เลขอนุมัติ (auth_code)</th>
+                            <th class="col-amount">ยอดออกใบแจ้งหนี้</th>
+                            <th>รายละเอียด</th>
+                        </tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+        </div>
+
+        <div class="card" id="issuedSection" style="max-width:none; display:none;">
+            <h2>รายชื่อผู้ป่วยที่ออกใบแจ้งหนี้แล้ว (ออกด้วยระบบนี้)</h2>
+            <div class="pagination-controls page-size-bar">
+                <label for="issuedPageSize">แสดงหน้าละ</label>
+                <select id="issuedPageSize">
+                    <option value="20">20</option>
+                    <option value="50">50</option>
+                    <option value="100">100</option>
+                    <option value="200">200</option>
+                    <option value="500">500</option>
+                    <option value="1000">1000</option>
+                </select>
+                <button type="button" class="btn btn-secondary btn-sm" id="btnIssuedPrevPage">&laquo; ก่อนหน้า</button>
+                <span id="issuedPageIndicator" class="hint"></span>
+                <button type="button" class="btn btn-secondary btn-sm" id="btnIssuedNextPage">ถัดไป &raquo;</button>
+            </div>
+            <div class="table-wrap">
+                <table class="data-table" id="issuedTable">
+                    <thead>
+                        <tr>
+                            <th>ลำดับ</th>
+                            <th>VN</th>
+                            <th>HN</th>
+                            <th>ชื่อ-สกุล</th>
+                            <th>วันที่-เวลา ที่มารับบริการ</th>
+                            <th>สิทธิ</th>
+                            <th>เลขอนุมัติ (auth_code)</th>
+                            <th class="col-amount">ยอดออกใบแจ้งหนี้</th>
+                            <th>เลขที่ใบแจ้งหนี้ (debt_id)</th>
+                            <th>ผู้ออกใบแจ้งหนี้</th>
+                            <th>วันที่-เวลาที่ออกใบแจ้งหนี้</th>
+                            <th>ดำเนินการ</th>
+                        </tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+            <div class="pagination-bar">
+                <div id="issuedSummary" class="hint"></div>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal-overlay" id="confirmModal">
+        <div class="modal-box">
+            <h3>ยืนยันการทำรายการ</h3>
+            <p id="confirmMessage"></p>
+            <div class="modal-actions">
+                <button type="button" class="btn btn-secondary" id="confirmCancel">ยกเลิก</button>
+                <button type="button" class="btn btn-success" id="confirmOk">ยืนยัน</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal-overlay" id="itemModal">
+        <div class="modal-box modal-box-lg">
+            <h3>รายการค่าใช้จ่าย</h3>
+            <p id="itemModalPatientInfo" class="hint"></p>
+            <div class="table-wrap">
+                <table class="data-table" id="itemTable">
+                    <thead>
+                        <tr>
+                            <th>รายการค่าใช้จ่าย</th>
+                            <th>จำนวน</th>
+                            <th class="col-amount">ราคารวม</th>
+                        </tr>
+                    </thead>
+                    <tbody></tbody>
+                    <tfoot>
+                        <tr>
+                            <th colspan="2">ยอดรวมทั้งหมด</th>
+                            <th class="col-amount" id="itemModalTotal"></th>
+                        </tr>
+                    </tfoot>
+                </table>
+            </div>
+            <div class="modal-actions">
+                <button type="button" class="btn btn-secondary" id="itemModalCancel">ยกเลิก</button>
+                <button type="button" class="btn btn-warning" id="itemModalConfirm">ยืนยันออกใบแจ้งหนี้</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal-overlay" id="cancelInvoiceModal">
+        <div class="modal-box modal-box-lg">
+            <h3>ยืนยันการยกเลิกใบแจ้งหนี้</h3>
+            <p id="cancelModalPatientInfo" class="hint"></p>
+            <div class="table-wrap">
+                <table class="data-table" id="cancelItemTable">
+                    <thead>
+                        <tr>
+                            <th>รายการ</th>
+                            <th class="col-amount">ราคา</th>
+                            <th class="col-amount">ราคารวม</th>
+                        </tr>
+                    </thead>
+                    <tbody></tbody>
+                    <tfoot>
+                        <tr>
+                            <th colspan="2">ยอดรวมทั้งหมด</th>
+                            <th class="col-amount" id="cancelModalTotal"></th>
+                        </tr>
+                    </tfoot>
+                </table>
+            </div>
+            <div class="modal-actions">
+                <button type="button" class="btn btn-secondary" id="cancelModalCancel">ปิด</button>
+                <button type="button" class="btn btn-danger" id="cancelModalConfirm">ยืนยันยกเลิกใบแจ้งหนี้</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="assets/dashboard.js"></script>
+</body>
+</html>

@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <title>เข้าสู่ระบบ - ระบบออกใบแจ้งหนี้อัตโนมัติ</title>
+    <link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+    <div class="page-center">
+        <div class="card">
+            <h1>🧾 ระบบออกใบแจ้งหนี้อัตโนมัติ</h1>
+            <p class="hint">เข้าสู่ระบบด้วยบัญชีผู้ใช้งาน HOSxP</p>
+
+            <div id="alertBox"></div>
+
+            <form id="loginForm">
+                <div class="form-group">
+                    <label for="username">ชื่อผู้ใช้งาน</label>
+                    <input type="text" id="username" name="username" autocomplete="username" required>
+                </div>
+                <div class="form-group">
+                    <label for="password">รหัสผ่าน</label>
+                    <input type="password" id="password" name="password" autocomplete="current-password" required>
+                </div>
+                <div class="form-group">
+                    <label for="department">ห้องทำงาน</label>
+                    <select id="department" name="department">
+                        <option value="">-- เลือกห้องทำงาน --</option>
+                    </select>
+                </div>
+
+                <div class="form-actions">
+                    <button type="submit" class="btn btn-primary" id="btnLogin">เข้าสู่ระบบ</button>
+                    <a href="settings.html" class="btn btn-secondary">ตั้งค่าการเชื่อมต่อ</a>
+                </div>
+            </form>
+        </div>
+    </div>
+    <script src="assets/login.js"></script>
+</body>
+</html>

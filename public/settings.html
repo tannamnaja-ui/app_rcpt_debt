@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <title>ตั้งค่าการเชื่อมต่อฐานข้อมูล - ระบบออกใบแจ้งหนี้อัตโนมัติ</title>
+    <link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+    <div class="page-center">
+        <div class="card card-wide">
+            <h1>⚙️ ตั้งค่าการเชื่อมต่อฐานข้อมูล</h1>
+
+            <form id="settingsForm">
+                <div class="form-group">
+                    <label>ประเภทฐานข้อมูล</label>
+                    <div class="radio-group">
+                        <label class="radio-inline"><input type="radio" name="db_type" value="mysql" checked> MySQL</label>
+                        <label class="radio-inline"><input type="radio" name="db_type" value="pgsql"> PostgreSQL</label>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label for="host">IP Server</label>
+                    <input type="text" id="host" name="host" required>
+                </div>
+
+                <div class="form-group">
+                    <label for="port">Port</label>
+                    <input type="text" id="port" name="port" required>
+                </div>
+
+                <div class="form-group">
+                    <label for="database">Database</label>
+                    <input type="text" id="database" name="database" required>
+                </div>
+
+                <div class="form-group">
+                    <label for="username">Username</label>
+                    <input type="text" id="username" name="username" required>
+                </div>
+
+                <div class="form-group">
+                    <label for="password">Password</label>
+                    <input type="password" id="password" name="password">
+                </div>
+
+                <div id="testResult"></div>
+
+                <div class="form-actions">
+                    <button type="button" class="btn btn-secondary" id="btnTest">ทดสอบการเชื่อมต่อ</button>
+                    <button type="submit" class="btn btn-primary">บันทึกข้อมูลเชื่อมต่อ</button>
+                    <a href="login.html" class="btn btn-link">กลับหน้าเข้าสู่ระบบ</a>
+                </div>
+            </form>
+        </div>
+    </div>
+    <script src="assets/settings.js"></script>
+</body>
+</html>

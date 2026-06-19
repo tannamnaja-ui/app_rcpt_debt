@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <title>ระบบออกใบแจ้งหนี้อัตโนมัติ</title>
+</head>
+<body>
+    <script>
+        fetch('/api/session')
+            .then(function (res) { return res.json(); })
+            .then(function (data) {
+                window.location.href = data.loggedIn ? 'dashboard.html' : 'login.html';
+            })
+            .catch(function () {
+                window.location.href = 'login.html';
+            });
+    </script>
+</body>
+</html>

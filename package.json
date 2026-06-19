@@ -1,0 +1,16 @@
+{
+  "name": "rcpt-debt",
+  "version": "1.0.0",
+  "private": true,
+  "description": "ระบบออกใบแจ้งหนี้อัตโนมัติ",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "express-session": "^1.18.0",
+    "mysql2": "^3.11.0",
+    "pg": "^8.12.0"
+  }
+}
