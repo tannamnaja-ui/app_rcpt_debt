@@ -347,6 +347,19 @@ input[type="radio"] {
     box-shadow: 0 4px 12px rgba(220, 38, 38, 0.35);
 }
 
+.btn-orange {
+    background: linear-gradient(135deg, #fb923c, #f97316);
+    color: #000;
+    box-shadow: 0 4px 12px rgba(249, 115, 22, 0.35);
+}
+
+.btn-orange:hover {
+    background: linear-gradient(135deg, #f97316, #ea580c);
+    color: #000;
+    transform: translateY(-1px);
+    box-shadow: 0 6px 16px rgba(234, 88, 12, 0.4);
+}
+
 .btn-danger:hover {
     background: linear-gradient(135deg, #ef4444, #b91c1c);
     transform: translateY(-1px);
@@ -474,10 +487,24 @@ input[type="radio"] {
     flex: 2 1 0;
 }
 
+/* สิทธิการรักษา - ขยายช่องให้ใหญ่กว่ากลุ่มสิทธิ เพราะตัวเลือกยาวขึ้น (ชื่อ + hipdata_code) */
+.filter-row .filter-pttype {
+    flex: 3 1 0;
+}
+
 .filter-row .filter-date,
 .filter-row .filter-time,
 .filter-row .filter-hn {
     flex: 1 1 0;
+}
+
+/* ช่องค้นหา HN ในหน้ารายชื่อที่ออกใบแจ้งหนี้แล้ว - ให้เป็นช่องเล็กชิดซ้าย ไม่ขยายเต็มแถว (ไม่เกิน ~3 นิ้ว) */
+#issuedSection .filter-row {
+    align-items: flex-end; /* ปุ่มค้นหาชิดขอบล่าง ให้สูงเท่าช่อง input ไม่ยืดตามความสูงของ label+input รวมกัน */
+}
+
+#issuedSection .filter-row .filter-hn {
+    flex: 0 0 220px;
 }
 
 .checkbox-grid {
@@ -603,6 +630,11 @@ input[type="radio"] {
     width: 1%;
     white-space: nowrap;
     text-align: right;
+}
+
+.data-table .col-narrow {
+    width: 1%;
+    white-space: nowrap;
 }
 
 .status-success {

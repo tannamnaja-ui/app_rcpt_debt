@@ -139,18 +139,101 @@ router.post('/cancel_invoice', requireLogin, async (req, res) => {
     }
 });
 
+// ยกเลิกใบแจ้งหนี้หลาย VN พร้อมกัน (ตามรายการที่เลือกในหน้า "รายชื่อผู้ป่วยที่ออกใบแจ้งหนี้แล้ว (ออกด้วยระบบนี้)")
+// ทำใน transaction เดียวกันทั้งหมด (all-or-nothing) เหมือนกับตอนออกใบแจ้งหนี้หลาย VN พร้อมกัน
+router.post('/cancel_invoices', requireLogin, async (req, res) => {
+    const body = req.body || {};
+    const vns = Array.isArray(body.vn) ? body.vn : [];
+
+    if (vns.length === 0) {
+        res.json({ success: false, message: 'กรุณาเลือกรายการอย่างน้อย 1 รายการ' });
+        return;
+    }
+
+    const vnList = vns.map((vn) => String(vn));
+    let conn;
+
+    try {
+        conn = await db.getConnection();
+        await conn.beginTransaction();
+
+        for (const vn of vnList) {
+            await runCancelInvoiceSteps(conn, vn);
+        }
+
+        await conn.commit();
+        res.json({ success: true, vn: vnList, message: 'ยกเลิกใบแจ้งหนี้สำเร็จ ' + vnList.length + ' รายการ' });
+    } catch (e) {
+        if (conn) {
+            try {
+                await conn.rollback();
+            } catch (e2) {
+                // ignore rollback error
+            }
+        }
+
+        res.json({ success: false, message: 'เกิดข้อผิดพลาด: ' + e.message });
+    } finally {
+        if (conn) conn.release();
+    }
+});
+
 // ID จาก get_serialnumber() ของระบบ HIS ชนกันได้เป็นบางครั้งภายใต้การใช้งานพร้อมกันจากหลายเครื่อง (duplicate key)
 // ไม่ใช่บั๊กของโค้ดนี้ - ถือเป็นเหตุชั่วคราว แก้ด้วยการลองเปิด transaction ใหม่ขอเลขชุดใหม่
 function isDuplicateKeyError(e) {
     return e && (e.code === '23505' || e.code === 'ER_DUP_ENTRY');
 }
 
+// รายชื่อ get_serialnumber() ทั้งหมดที่ใช้ตลอด 9 ขั้นตอนออกใบแจ้งหนี้ (runInvoiceSteps ใน invoiceService.js)
+const REQUIRED_SERIAL_NAMES = [
+    'opd_opi_fn_tr_list_id',
+    'opd_opi_fn_tr_detail_id',
+    'opd_opi_finance_summary_id',
+    'opd_opi_fn_cr_list_id',
+    'finance_number',
+    'opd_opi_fn_cr_detail_id',
+    'rcpt_debt_id',
+];
+const warmedSerials = new Set();
+
+// get_serialnumber() สร้าง sequence ของ Postgres แบบ lazy (CREATE SEQUENCE IF NOT EXISTS) โดย seed ค่าเริ่มต้น
+// จากตาราง serial ซึ่งเก็บ "เลขที่ใช้ไปล่าสุด" ไม่ใช่เลขถัดไป - ถ้า sequence จริงยังไม่เคยถูกสร้างในฐานข้อมูลนี้มาก่อน
+// (เช่น ฐานข้อมูลสำเนา/ทดสอบที่ก็อปปี้มาแต่ข้อมูล ไม่ได้ก็อปปี้ sequence object) การเรียกครั้งแรกจะได้เลขที่ซ้ำกับ
+// ข้อมูลที่มีอยู่จริงพอดี (duplicate key) และถ้าเกิดขึ้นในทรานแซกชันที่ rollback การสร้าง sequence นั้นก็จะถูก
+// rollback ไปด้วย (CREATE SEQUENCE เป็น DDL แบบ transactional) ทำให้ error เดิมเกิดซ้ำไม่รู้จบทุกครั้งที่ลองใหม่
+// จึงต้อง "อุ่นเครื่อง" เรียกแบบ autocommit (นอกทรานแซกชัน ผ่าน db.query ธรรมดา) ก่อนเข้าสู่ทรานแซกชันจริง
+// เพื่อให้ sequence ถูกสร้างและขยับผ่านค่าที่ชนกันไปแล้วอย่างถาวร ครั้งเดียวพอต่อการรันของแอปนี้
+async function warmUpSerials() {
+    for (const name of REQUIRED_SERIAL_NAMES) {
+        if (warmedSerials.has(name)) continue;
+        await db.query('SELECT get_serialnumber(:name)', { name });
+        warmedSerials.add(name);
+    }
+}
+
+// วันที่/เวลาปัจจุบัน ณ ตอนออกใบแจ้งหนี้ (เป็นวันที่ออกใบแจ้งหนี้จริง ไม่ใช่วันที่เปิด visit)
+function formatNowDateTime() {
+    const now = new Date();
+    const pad = (n) => String(n).padStart(2, '0');
+    const date = now.getFullYear() + '-' + pad(now.getMonth() + 1) + '-' + pad(now.getDate());
+    const time = pad(now.getHours()) + ':' + pad(now.getMinutes()) + ':' + pad(now.getSeconds());
+    return { date, time };
+}
+
+// ออกใบแจ้งหนี้ 1 ครั้ง ให้ VN ทุกรายการที่เลือกใช้เลขที่ใบแจ้งหนี้ (finance_number) เดียวกัน
+// รวมเป็นใบแจ้งหนี้ใบเดียว แทนที่จะแยกใบต่อ VN
 async function attemptIssueAll(vnList, infoMap, staff, dbType) {
     let conn;
 
     try {
+        await warmUpSerials();
+
         conn = await db.getConnection();
         await conn.beginTransaction();
+
+        const financeIdRows = await conn.query("SELECT get_serialnumber('finance_number') AS finance_number");
+        const financeNumber = String(financeIdRows[0].finance_number);
+        const { date: debtDate, time: debtTime } = formatNowDateTime();
 
         const results = [];
         let failedVn = null;
@@ -158,11 +241,12 @@ async function attemptIssueAll(vnList, infoMap, staff, dbType) {
 
         for (const vn of vnList) {
             try {
-                const { financeNumber } = await runInvoiceSteps(conn, vn, staff, dbType);
+                await runInvoiceSteps(conn, vn, staff, dbType, financeNumber, debtDate, debtTime);
                 const debtId = await getDebtId(conn, vn, dbType, financeNumber);
                 results.push(Object.assign({}, infoMap[vn], {
                     vn,
                     debt_id: debtId,
+                    finance_number: financeNumber,
                     success: true,
                     message: 'ออกใบแจ้งหนี้สำเร็จ',
                 }));

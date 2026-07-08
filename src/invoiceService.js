@@ -2,18 +2,22 @@
  * 9 ขั้นตอนของกระบวนการ "ออกใบแจ้งหนี้" (issue debt invoice) สำหรับ 1 VN
  * ทุก VN ที่เลือกรันรวมกันใน transaction เดียว (ผู้เรียกเป็นคนคุม begin/commit/rollback)
  * หากขั้นตอนใดของ VN ใดล้มเหลว ผู้เรียกต้อง rollback ทั้งหมด - ไม่มี VN ใดถูกออกใบแจ้งหนี้
+ *
+ * financeNumber ถูกสร้างครั้งเดียวโดยผู้เรียก (ต่อการออกใบแจ้งหนี้ 1 ครั้ง) แล้วส่งเข้ามาใช้ร่วมกันทุก VN
+ * เพื่อให้ VN หลายรายการที่เลือกพร้อมกันกลายเป็นใบแจ้งหนี้ใบเดียว (เลขที่เดียวกัน)
+ * debtDate/debtTime คือวันที่-เวลาที่ออกใบแจ้งหนี้จริง (ปัจจุบัน) ไม่ใช่วันที่เปิด visit
  */
 
-async function runInvoiceSteps(conn, vn, staffLoginName, dbType) {
+async function runInvoiceSteps(conn, vn, staffLoginName, dbType, financeNumber, debtDate, debtTime) {
     const vercode = await fetchVercode(conn, vn);
     const trListId = await step1TransferList(conn, vn);
     await step2GuidTransfer(conn, vn, trListId);
     await step3TransferDetail(conn, vn, trListId);
     await step4FinanceSummary(conn, vn);
-    const { crListId, financeNumber } = await step5ClearList(conn, vn);
+    const { crListId } = await step5ClearList(conn, vn, financeNumber);
     await step55LinkClearList(conn, trListId, crListId);
     await step6ClearDetail(conn, vn, crListId);
-    await step7RcptDebt(conn, vn, dbType, financeNumber, vercode);
+    await step7RcptDebt(conn, vn, dbType, financeNumber, vercode, debtDate, debtTime, staffLoginName);
     const debtId = await fetchDebtId(conn, vn, dbType, financeNumber);
     await step8RcptDebtDetail(conn, vn, debtId);
     await step9UpdateFinanceNumber(conn, vn, financeNumber);
@@ -47,6 +51,8 @@ async function step1TransferList(conn, vn) {
 }
 
 // 2) เชื่อม hos_guid ของ opitemrece (เฉพาะ paidst='02' ที่ยังไม่มี finance_number) เข้ากับรายการโอนในขั้นตอนที่ 1
+// ข้าม hos_guid ที่เคยถูกโอนไปแล้ว (เช่น โอนค้างไว้จาก HOSxP เอง หรือความพยายามโอนครั้งก่อนที่ไม่จบ) เพื่อกัน
+// duplicate key ที่ opd_opi_hos_guid_transfer.opi_guid (PK) เพราะค่า hos_guid คงที่ retry ใหม่ก็ชนซ้ำเดิม
 async function step2GuidTransfer(conn, vn, trListId) {
     await conn.query(
         `INSERT INTO opd_opi_hos_guid_transfer
@@ -55,27 +61,33 @@ async function step2GuidTransfer(conn, vn, trListId) {
         FROM opitemrece oi
         WHERE oi.vn = :vn
         AND oi.paidst = '02'
-        AND (oi.finance_number IS NULL OR oi.finance_number = '')`,
+        AND (oi.finance_number IS NULL OR oi.finance_number = '')
+        AND NOT EXISTS (
+            SELECT 1 FROM opd_opi_hos_guid_transfer t WHERE t.opi_guid = oi.hos_guid
+        )`,
         { vn, tr_list_id: trListId }
     );
 }
 
 // 3) รายละเอียดรายการโอน — เฉพาะ paidst='02' เท่านั้น (group by income/pttype)
+// opitemrece.pttype บางแถวเป็น NULL (ข้อมูลระดับรายการไม่ได้ระบุสิทธิ) แต่คอลัมน์ pttype ปลายทางเป็น NOT NULL
+// จึงต้อง COALESCE กับ ovst.pttype (สิทธิของ visit) เป็นค่า fallback
 async function step3TransferDetail(conn, vn, trListId) {
     await conn.query(
         `INSERT INTO opd_opi_fn_tr_detail
             (opd_opi_fn_tr_detail_id, opd_opi_fn_tr_list_id, income, pttype,
              amount_paidst_01, amount_paidst_02, amount_paidst_03, total_amount,
              amount_paidst_04, process_order, amount_paidst_04a, amount_paidst_04b)
-        SELECT get_serialnumber('opd_opi_fn_tr_detail_id'), :tr_list_id, op.income, op.pttype,
+        SELECT get_serialnumber('opd_opi_fn_tr_detail_id'), :tr_list_id, op.income, COALESCE(op.pttype, o.pttype),
             '0',
             SUM(op.sum_price),
             '0',
             SUM(op.sum_price), '0', '1000', '0', '0'
         FROM opitemrece op
+        JOIN ovst o ON o.vn = op.vn
         WHERE op.vn = :vn
         AND op.paidst = '02'
-        GROUP BY op.income, op.pttype`,
+        GROUP BY op.income, COALESCE(op.pttype, o.pttype)`,
         { vn, tr_list_id: trListId }
     );
 }
@@ -93,24 +105,26 @@ async function step4FinanceSummary(conn, vn) {
             '0', SUM(op.sum_price), '0',
             '0', SUM(op.sum_price), '0', SUM(op.sum_price),
             '0', SUM(op.sum_price), '0',
-            '0', op.pttype, 'N', '0', '0',
+            '0', COALESCE(op.pttype, o.pttype), 'N', '0', '0',
             SUM(op.sum_price),
             SUM(op.sum_price)
         FROM opitemrece op
+        JOIN ovst o ON o.vn = op.vn
         WHERE op.vn = :vn
         AND op.paidst = '02'
-        GROUP BY op.pttype, op.vn, op.income`,
+        GROUP BY COALESCE(op.pttype, o.pttype), op.vn, op.income`,
         { vn }
     );
 }
 
-// 5) เปิดรายการเคลียร์หนี้ (opd_opi_fn_cr_list) พร้อมเลขที่ใบแจ้งหนี้ (finance_number)
-async function step5ClearList(conn, vn) {
+// 5) เปิดรายการเคลียร์หนี้ (opd_opi_fn_cr_list) โดยใช้ finance_number (เลขที่ใบแจ้งหนี้) ที่ผู้เรียกกำหนดมาให้ (ใช้ร่วมกันได้หลาย VN)
+// ต้องกำหนด vp.pttype = o.pttype ด้วย เพราะ visit_pttype อาจมีมากกว่า 1 แถวต่อ VN (เช่น มีประวัติสิทธิเก่าค้างอยู่)
+// ถ้าไม่กำหนด SELECT จะ fan-out ได้หลายแถวแต่ทุกแถวใช้ :cr_list_id ค่าเดียวกัน ทำให้ INSERT ชนกันเองภายในคำสั่งเดียว
+async function step5ClearList(conn, vn, financeNumber) {
     const idRows = await conn.query(
-        "SELECT get_serialnumber('opd_opi_fn_cr_list_id') AS cr_list_id, get_serialnumber('finance_number') AS finance_number"
+        "SELECT get_serialnumber('opd_opi_fn_cr_list_id') AS cr_list_id"
     );
     const crListId = idRows[0].cr_list_id;
-    const financeNumber = String(idRows[0].finance_number);
 
     await conn.query(
         `INSERT INTO opd_opi_fn_cr_list
@@ -120,10 +134,10 @@ async function step5ClearList(conn, vn) {
         SELECT :cr_list_id, o.vn, vp.pttype,
             o.vstdate, o.vsttime, o.staff, v.uc_money, :finance_number, 'Y'
         FROM vn_stat v, ovst o, visit_pttype vp
-        WHERE v.vn = o.vn AND vp.vn = o.vn AND o.vn = :vn`,
+        WHERE v.vn = o.vn AND vp.vn = o.vn AND vp.pttype = o.pttype AND o.vn = :vn`,
         { vn, cr_list_id: crListId, finance_number: financeNumber }
     );
-    return { crListId, financeNumber };
+    return { crListId };
 }
 
 // 5.5) เชื่อมรายการโอน (opd_opi_fn_tr_detail) เข้ากับรายการเคลียร์หนี้ (opd_opi_fn_cr_list)
@@ -156,30 +170,43 @@ async function step6ClearDetail(conn, vn, crListId) {
     );
 }
 
-// 7) บันทึกใบแจ้งหนี้ (rcpt_debt) — เฉพาะ paidst='02' เท่านั้น (group by vn/hn/vstdate/vsttime/staff/pttype)
-async function step7RcptDebt(conn, vn, dbType, financeNumber, vercode) {
+// 7) บันทึกใบแจ้งหนี้ (rcpt_debt) — เฉพาะ paidst='02' เท่านั้น (group by vn/hn เท่านั้น = 1 แถวต่อ 1 VN เสมอ)
+// debt_date/debt_time/debt_date_time ใช้วันที่-เวลาปัจจุบัน (ตอนออกใบแจ้งหนี้จริง) ไม่ใช่วันที่เปิด visit (vstdate/vsttime)
+// staff ที่บันทึกคือเจ้าหน้าที่ที่ออกใบแจ้งหนี้ตอนนี้ (staffLoginName) ไม่ใช่ op.staff ของแต่ละรายการ
+// pttype ใช้ค่าของ visit (o.pttype ซึ่งมีค่าเดียวต่อ 1 VN) แทนการอิง op.pttype ระดับรายการ
+// เพราะ opitemrece แต่ละแถวอาจมี staff/pttype ต่างกัน ถ้า group by ค่าระดับรายการเหล่านี้จะทำให้ VN เดียวกัน
+// ถูกแยกออกเป็นหลายใบแจ้งหนี้โดยไม่จำเป็น - ต้องการแค่ 1 ใบต่อ 1 VN เสมอ
+async function step7RcptDebt(conn, vn, dbType, financeNumber, vercode, debtDate, debtTime, staffLoginName) {
+    // ใช้ชื่อ parameter แยกกันสำหรับ debt_date/debt_time (ผูกกับคอลัมน์ DATE/TIME โดยตรง)
+    // กับ debt_date_txt/debt_time_txt (ใช้ใน CONCAT ต้อง cast เป็น text) แม้ค่าเดียวกัน
+    // เพราะ PostgreSQL ไม่ยอมให้ parameter ชื่อเดียวกันถูก deduce เป็นคนละชนิดในคำสั่งเดียวกัน
     const debtDateTimeExpr = dbType === 'pgsql'
-        ? "(CONCAT(op.vstdate::text, ' ', op.vsttime::text))::timestamp"
-        : "CAST(CONCAT(op.vstdate, ' ', op.vsttime) AS DATETIME)";
+        ? "(CONCAT(:debt_date_txt::text, ' ', :debt_time_txt::text))::timestamp"
+        : "CAST(CONCAT(:debt_date_txt, ' ', :debt_time_txt) AS DATETIME)";
 
     await conn.query(
         `INSERT INTO rcpt_debt
             (debt_id, vn, hn, debt_date, debt_time, staff, amount, pt_type,
              computer, finance_number, pttype, discount_amount, total_amount,
              debt_date_time, debt_doc_id, department, special_discount_amount, ofc_paid_amount, sss_approval_code)
-        SELECT get_serialnumber('rcpt_debt_id'), op.vn, op.hn, op.vstdate, op.vsttime, op.staff,
+        SELECT get_serialnumber('rcpt_debt_id'), op.vn, op.hn, :debt_date, :debt_time, :staff,
             SUM(op.sum_price),
-            'OPD', 'App rcpt auto', :finance_number, op.pttype,
+            'OPD', 'App rcpt auto', :finance_number, o.pttype,
             SUM(op.discount),
             SUM(op.sum_price),
             ${debtDateTimeExpr},
-            CONCAT(op.pttype, '/', ROW_NUMBER() OVER (ORDER BY op.pttype)),
+            CONCAT(o.pttype, '/1'),
             'OPD', '0', '0', :vercode
         FROM opitemrece op
+        JOIN ovst o ON o.vn = op.vn
         WHERE op.vn = :vn
         AND op.paidst = '02'
-        GROUP BY op.vn, op.hn, op.vstdate, op.vsttime, op.staff, op.pttype`,
-        { vn, finance_number: financeNumber, vercode }
+        GROUP BY op.vn, op.hn, o.pttype`,
+        {
+            vn, finance_number: financeNumber, vercode, staff: staffLoginName,
+            debt_date: debtDate, debt_time: debtTime,
+            debt_date_txt: debtDate, debt_time_txt: debtTime,
+        }
     );
 }
 

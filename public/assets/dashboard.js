@@ -1,4 +1,5 @@
 (function () {
+    console.log('dashboard.js loaded - build 2026-07-09-05 (pttype filter widened + name(hipdata_code) label)');
     var STORAGE_HIPDATA = 'rcpt_debt_hipdata_codes';
     var STORAGE_PTTYPE = 'rcpt_debt_pttypes';
 
@@ -11,6 +12,9 @@
     var btnRemember = document.getElementById('btnRemember');
     var btnIssue = document.getElementById('btnIssue');
     var btnLogout = document.getElementById('btnLogout');
+    var patientListCard = document.getElementById('patientListCard');
+    var btnTogglePatientList = document.getElementById('btnTogglePatientList');
+    var btnExpandPatientList = document.getElementById('btnExpandPatientList');
     var checkAll = document.getElementById('checkAll');
     var patientTableBody = document.querySelector('#patientTable tbody');
     var patientSummary = document.getElementById('patientSummary');
@@ -42,9 +46,15 @@
     var btnSelectAll = document.getElementById('btnSelectAll');
     var btnDeselectAll = document.getElementById('btnDeselectAll');
     var btnCheckIssued = document.getElementById('btnCheckIssued');
+    var btnCheckIssuedHosxp = document.getElementById('btnCheckIssuedHosxp');
     var issuedSection = document.getElementById('issuedSection');
+    var issuedSectionTitle = document.getElementById('issuedSectionTitle');
+    var issuedHnFilter = document.getElementById('issuedHnFilter');
+    var btnIssuedHnSearch = document.getElementById('btnIssuedHnSearch');
     var issuedTableBody = document.querySelector('#issuedTable tbody');
     var issuedSummary = document.getElementById('issuedSummary');
+    var checkAllIssued = document.getElementById('checkAllIssued');
+    var btnCancelSelectedIssued = document.getElementById('btnCancelSelectedIssued');
     var issuedPageSizeSelect = document.getElementById('issuedPageSize');
     var btnIssuedPrevPage = document.getElementById('btnIssuedPrevPage');
     var btnIssuedNextPage = document.getElementById('btnIssuedNextPage');
@@ -54,7 +64,9 @@
     var totalPages = 1;
     var currentIssuedPage = 1;
     var totalIssuedPages = 1;
+    var issuedSource = 'app'; // 'app' = ออกด้วย app นี้ / 'hosxp' = ออกจากโปรแกรม HOSxP เอง
     var selectedVns = {}; // vn -> { amount: number, checked: boolean } - คงสถานะการติ๊กเลือกข้ามหน้า
+    var selectedIssuedVns = {}; // vn -> true - คงสถานะติ๊กเลือกยกเลิกใบแจ้งหนี้ข้ามหน้า
 
     function showAlert(message, type) {
         alertBox.innerHTML = '<div class="alert alert-' + type + '">' + message + '</div>';
@@ -493,7 +505,7 @@
                 }
 
                 var items = data.data.map(function (row) {
-                    return { value: row.pttype, text: row.pttype + ' - ' + row.name };
+                    return { value: row.pttype, text: row.name + '(' + row.hipdata_code + ')' };
                 });
 
                 if (!restorePreferred) {
@@ -663,6 +675,7 @@
 
         if (resetSelection) selectedVns = {};
 
+        setPatientListCollapsed(false); // ค้นหาใหม่แล้วขยายกลับมาให้เห็นผลลัพธ์เสมอ
         patientSummary.textContent = 'กำลังค้นหา...';
         patientTableBody.innerHTML = '';
         resultSection.style.display = 'none';
@@ -710,20 +723,23 @@
             var tr = document.createElement('tr');
 
             tr.appendChild(makeCell(startIndex + index + 1));
-            tr.appendChild(makeCell(row.vn));
-            tr.appendChild(makeCell(row.hn));
-            tr.appendChild(makeCell(row.patient_name));
-            tr.appendChild(makeCell(formatVisitDateTime(row.vstdate, row.vsttime)));
-            tr.appendChild(makeCell(row.pttype_name || row.pttype));
-            tr.appendChild(makeCell(row.auth_code || ''));
 
-            var tdAmount = makeCell(formatMoney(row.debt_amount));
-            tdAmount.className = 'col-amount';
-            tr.appendChild(tdAmount);
-
-            tr.appendChild(makeCell(row.debt_id));
-            tr.appendChild(makeCell(row.staff));
-            tr.appendChild(makeCell(formatDebtDateTime(row.debt_date_time)));
+            var tdCheck = document.createElement('td');
+            var cbSel = document.createElement('input');
+            cbSel.type = 'checkbox';
+            cbSel.className = 'issued-row-check';
+            cbSel.value = row.vn;
+            cbSel.checked = !!selectedIssuedVns[row.vn];
+            cbSel.addEventListener('change', function () {
+                if (cbSel.checked) {
+                    selectedIssuedVns[cbSel.value] = true;
+                } else {
+                    delete selectedIssuedVns[cbSel.value];
+                }
+                updateCheckAllIssuedState();
+            });
+            tdCheck.appendChild(cbSel);
+            tr.appendChild(tdCheck);
 
             var tdAction = document.createElement('td');
             var btnCancelOne = document.createElement('button');
@@ -736,10 +752,81 @@
             tdAction.appendChild(btnCancelOne);
             tr.appendChild(tdAction);
 
+            tr.appendChild(makeCell(row.vn));
+            tr.appendChild(makeCell(row.hn));
+            tr.appendChild(makeCell(row.patient_name));
+            tr.appendChild(makeCell(formatVisitDateTime(row.vstdate, row.vsttime)));
+            tr.appendChild(makeCell(row.pttype_name || row.pttype));
+            tr.appendChild(makeCell(row.auth_code || ''));
+
+            var tdAmount = makeCell(formatMoney(row.debt_amount));
+            tdAmount.className = 'col-amount';
+            tr.appendChild(tdAmount);
+
+            tr.appendChild(makeCell(row.finance_number));
+            tr.appendChild(makeCell(row.debt_id));
+
+            var tdStaff = makeCell(row.staff);
+            tdStaff.className = 'col-narrow';
+            tr.appendChild(tdStaff);
+
+            tr.appendChild(makeCell(formatDebtDateTime(row.debt_date_time)));
+
             issuedTableBody.appendChild(tr);
         });
 
         issuedSummary.textContent = 'พบทั้งหมด ' + totalCount + ' รายการ ยอดรวม ' + formatMoney(totalAmount) + ' บาท';
+        updateCheckAllIssuedState();
+    }
+
+    function updateCheckAllIssuedState() {
+        var boxes = Array.prototype.slice.call(issuedTableBody.querySelectorAll('.issued-row-check'));
+        checkAllIssued.checked = boxes.length > 0 && boxes.every(function (cb) { return cb.checked; });
+    }
+
+    function doCancelSelectedIssued(vns) {
+        btnCancelSelectedIssued.disabled = true;
+        btnCancelSelectedIssued.textContent = 'กำลังดำเนินการ...';
+
+        fetch('/api/cancel_invoices', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ vn: vns })
+        })
+            .then(function (res) { return res.json(); })
+            .then(function (data) {
+                if (!data.success) {
+                    alert('เกิดข้อผิดพลาด: ' + data.message);
+                    return;
+                }
+
+                // ยกเลิกสำเร็จ - ล้างสถานะที่เลือกไว้ของ VN เหล่านี้ทิ้ง (ครอบคลุมทุกหน้า ไม่ใช่แค่หน้าปัจจุบัน)
+                vns.forEach(function (vn) { delete selectedIssuedVns[vn]; });
+                showAlert(data.message, 'success');
+                searchIssued(currentIssuedPage);
+            })
+            .catch(function (err) {
+                alert('เกิดข้อผิดพลาด: ' + err.message);
+            })
+            .finally(function () {
+                btnCancelSelectedIssued.disabled = false;
+                btnCancelSelectedIssued.textContent = 'ยกเลิกใบแจ้งหนี้รายการที่เลือก';
+            });
+    }
+
+    // ยกเลิกตาม VN ที่ถูกติ๊กไว้ใน selectedIssuedVns ซึ่งจำสถานะข้ามหน้าไว้ (ไม่ใช่แค่ checkbox ที่เห็นในหน้าปัจจุบัน)
+    function cancelSelectedIssued() {
+        var vns = Object.keys(selectedIssuedVns);
+
+        if (vns.length === 0) {
+            alert('กรุณาเลือกรายการอย่างน้อย 1 รายการ');
+            return;
+        }
+
+        showConfirm(
+            'ยืนยันการยกเลิกใบแจ้งหนี้ ' + vns.length + ' รายการ ใช่หรือไม่?',
+            function () { doCancelSelectedIssued(vns); }
+        );
     }
 
     function updateIssuedPagination(page, pages) {
@@ -756,12 +843,15 @@
         issuedSummary.textContent = 'กำลังค้นหา...';
         issuedTableBody.innerHTML = '';
 
-        fetch('/api/patients_issued', {
+        var url = issuedSource === 'hosxp' ? '/api/patients_issued_hosxp' : '/api/patients_issued';
+
+        fetch(url, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 pttype: pttypes,
                 hn: hnFilter.value.trim(),
+                debt_hn: issuedHnFilter.value.trim(),
                 date_start: dateStart.value,
                 date_end: dateEnd.value,
                 time_start: timeStart.value,
@@ -834,7 +924,7 @@
 
         var successVns = {};
 
-        results.forEach(function (r) {
+        results.forEach(function (r, index) {
             if (r.success) {
                 successVns[r.vn] = true;
                 delete selectedVns[r.vn];
@@ -842,11 +932,14 @@
 
             var tr = document.createElement('tr');
 
+            tr.appendChild(makeCell(index + 1));
+
             var tdStatus = document.createElement('td');
             tdStatus.textContent = r.success ? 'สำเร็จ' : 'ไม่สำเร็จ';
             tdStatus.className = r.success ? 'status-success' : 'status-error';
             tr.appendChild(tdStatus);
 
+            tr.appendChild(makeCell(r.finance_number || ''));
             tr.appendChild(makeCell(r.debt_id || ''));
             tr.appendChild(makeCell(r.vn));
             tr.appendChild(makeCell(r.hn));
@@ -924,14 +1017,101 @@
     btnSelectAll.addEventListener('click', function () { setAllSelection(true); });
     btnDeselectAll.addEventListener('click', function () { setAllSelection(false); });
 
-    btnCheckIssued.addEventListener('click', function () {
-        if (issuedSection.style.display === 'none') {
-            issuedSection.style.display = '';
-            searchIssued(1);
-        } else {
-            issuedSection.style.display = 'none';
-        }
+    // ย่อ/ขยายส่วน "รายการผู้ป่วย" ด้วยตนเอง หรือถูกย่ออัตโนมัติเมื่อเปิดดูรายชื่อที่ออกใบแจ้งหนี้แล้ว
+    // ตอนย่อ ซ่อนทั้งเฟรมไปเลย เหลือแค่ปุ่มลูกศรลงเล็กๆ ไว้กดขยายกลับ
+    function setPatientListCollapsed(collapsed) {
+        patientListCard.style.display = collapsed ? 'none' : '';
+        btnExpandPatientList.style.display = collapsed ? '' : 'none';
+    }
+
+    btnTogglePatientList.addEventListener('click', function () {
+        setPatientListCollapsed(true);
     });
+
+    btnExpandPatientList.addEventListener('click', function () {
+        setPatientListCollapsed(false);
+    });
+
+    // กดปุ่มนี้แล้ว refresh รายชื่อทันทีทุกครั้ง (ไม่ toggle ปิด) เพื่อให้เห็นรายการล่าสุดหลังออกใบแจ้งหนี้
+    function toggleIssuedSection(source, title) {
+        issuedSource = source;
+        issuedSectionTitle.textContent = title;
+        issuedSection.style.display = '';
+        resultSection.style.display = 'none'; // ซ่อนผลการออกใบแจ้งหนี้ของรอบก่อนหน้า ไม่ให้ค้างแสดงปนกับรายชื่อที่ออกแล้ว
+        setPatientListCollapsed(true); // ย่อส่วนรายการผู้ป่วยลงก่อน ผู้ใช้กดขยายกลับออกมาดูได้
+        selectedIssuedVns = {}; // เริ่มค้นหาใหม่ ล้างรายการที่เคยติ๊กไว้ (การติ๊กจะคงอยู่แค่ในช่วงดูผลค้นหาเดียวกัน ข้ามหน้าได้)
+        searchIssued(1);
+    }
+
+    btnCheckIssued.addEventListener('click', function () {
+        toggleIssuedSection('app', 'รายชื่อผู้ป่วยที่ออกใบแจ้งหนี้แล้ว (ออกด้วยระบบนี้)');
+    });
+
+    btnCheckIssuedHosxp.addEventListener('click', function () {
+        toggleIssuedSection('hosxp', 'รายชื่อผู้ป่วยที่ออกใบแจ้งหนี้แล้ว (ออกจากโปรแกรม HOSxP)');
+    });
+
+    // ค้นหา HN เฉพาะในส่วนรายชื่อที่ออกใบแจ้งหนี้แล้ว (ค้นหาจาก rcpt_debt.hn แยกจากช่อง HN ในตัวกรองค้นหาหลัก)
+    btnIssuedHnSearch.addEventListener('click', function () { searchIssued(1); });
+    issuedHnFilter.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter') searchIssued(1);
+    });
+
+    // ติ๊ก "เลือกทั้งหมด" ให้เลือกทุก VN ที่ตรงเงื่อนไขจริง (ทุกหน้า ไม่ใช่แค่หน้าที่กำลังแสดง)
+    function setAllIssuedSelection(checked) {
+        if (!checked) {
+            selectedIssuedVns = {};
+            Array.prototype.slice.call(issuedTableBody.querySelectorAll('.issued-row-check')).forEach(function (cb) {
+                cb.checked = false;
+            });
+            return;
+        }
+
+        var pttypes = pttypeMultiselect.getSelected();
+        checkAllIssued.disabled = true;
+
+        var url = issuedSource === 'hosxp' ? '/api/patients_issued_hosxp_vns' : '/api/patients_issued_vns';
+
+        fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                pttype: pttypes,
+                hn: hnFilter.value.trim(),
+                debt_hn: issuedHnFilter.value.trim(),
+                date_start: dateStart.value,
+                date_end: dateEnd.value,
+                time_start: timeStart.value,
+                time_end: timeEnd.value
+            })
+        })
+            .then(function (res) { return res.json(); })
+            .then(function (data) {
+                if (!data.success) {
+                    alert('เกิดข้อผิดพลาด: ' + data.message);
+                    checkAllIssued.checked = false;
+                    return;
+                }
+
+                data.data.forEach(function (row) { selectedIssuedVns[row.vn] = true; });
+                Array.prototype.slice.call(issuedTableBody.querySelectorAll('.issued-row-check')).forEach(function (cb) {
+                    cb.checked = true;
+                });
+            })
+            .catch(function (err) {
+                alert('เกิดข้อผิดพลาด: ' + err.message);
+                checkAllIssued.checked = false;
+            })
+            .finally(function () {
+                checkAllIssued.disabled = false;
+            });
+    }
+
+    checkAllIssued.addEventListener('change', function () {
+        setAllIssuedSelection(checkAllIssued.checked);
+    });
+
+    btnCancelSelectedIssued.addEventListener('click', cancelSelectedIssued);
 
     issuedPageSizeSelect.addEventListener('change', function () { searchIssued(1); });
     btnIssuedPrevPage.addEventListener('click', function () {
