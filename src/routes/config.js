@@ -38,8 +38,12 @@ router.post('/config', (req, res) => {
         return;
     }
 
-    db.saveConfig(config);
-    res.json({ success: true });
+    try {
+        db.saveConfig(config);
+        res.json({ success: true });
+    } catch (e) {
+        res.json({ success: false, message: 'บันทึกการตั้งค่าไม่สำเร็จ: ' + e.message });
+    }
 });
 
 router.post('/test_connection', async (req, res) => {
