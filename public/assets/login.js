@@ -81,7 +81,7 @@
                     return;
                 }
                 localStorage.setItem(STORAGE_KEY, departmentSelect.value);
-                window.location.href = 'dashboard.html';
+                window.location.href = 'index_first.html';
             })
             .catch(function (err) {
                 showAlert('เกิดข้อผิดพลาด: ' + err.message, 'error');
@@ -97,7 +97,7 @@
         .then(function (res) { return res.json(); })
         .then(function (data) {
             if (data.loggedIn) {
-                window.location.href = 'dashboard.html';
+                window.location.href = 'index_first.html';
                 return;
             }
             init();

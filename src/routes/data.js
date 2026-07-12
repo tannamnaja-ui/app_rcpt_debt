@@ -262,4 +262,169 @@ router.post('/patients_issued_hosxp_vns', requireLogin, async (req, res) => {
     }
 });
 
+// ค้นหารายชื่อผู้ป่วยใน (IPD) ที่ยังไม่ออกใบแจ้งหนี้ - ใช้วันที่จำหน่าย (ipt.dchdate) แทนวันที่เปิด visit
+// ไม่มีตัวกรองช่วงเวลา (time) เหมือนฝั่ง OPD เพราะ dchdate เป็นระดับวัน ไม่ใช่ระดับเวลา
+// opts.issued/opts.hosxp ใช้ค้นรายชื่อที่ออกใบแจ้งหนี้แล้ว (เหมือนฝั่ง OPD ใน buildPatientsBaseQuery)
+// rcpt_debt.vn ของ IPD เก็บค่า an ตรงๆ (ไม่ใช่ vn จริง) จึง join ด้วย rd.vn = i.an
+function buildIpdPatientsBaseQuery(body, opts) {
+    opts = opts || {};
+    const pttypes = Array.isArray(body.pttype) ? body.pttype : [];
+    const dateStart = String(body.date_start || '');
+    const dateEnd = String(body.date_end || '');
+    const hn = String(body.hn || '').trim();
+    const debtHn = String(body.debt_hn || '').trim();
+
+    if (!DATE_REGEX.test(dateStart) || !DATE_REGEX.test(dateEnd)) {
+        return { error: 'รูปแบบวันที่ไม่ถูกต้อง' };
+    }
+
+    const params = { date_start: dateStart, date_end: dateEnd };
+    let pttypeCondition = '';
+    if (pttypes.length > 0) {
+        const placeholders = pttypes.map((pt, i) => {
+            const key = 'pt' + i;
+            params[key] = String(pt);
+            return ':' + key;
+        });
+        pttypeCondition = `AND i.pttype IN (${placeholders.join(', ')})`;
+    }
+
+    let hnCondition = '';
+    if (hn) {
+        params.hn = hn;
+        hnCondition = 'AND i.hn = :hn';
+    }
+
+    let debtHnCondition = '';
+    if (opts.issued && debtHn) {
+        params.debt_hn = debtHn;
+        debtHnCondition = 'AND rd.hn = :debt_hn';
+    }
+
+    const isPg = db.getType() === 'pgsql';
+    const dchdateExpr = isPg
+        ? "TO_CHAR(i.dchdate, 'YYYY-MM-DD')"
+        : "DATE_FORMAT(i.dchdate, '%Y-%m-%d')";
+    const amountExpr = isPg ? 'CAST(rd.amount AS NUMERIC)' : 'CAST(rd.amount AS DECIMAL(18,2))';
+
+    // issued = true: เฉพาะรายการที่ออกใบแจ้งหนี้แล้ว
+    // hosxp = false (ค่าเริ่มต้น): เฉพาะที่ออกด้วย app นี้ (rcpt_debt.computer = 'App rcpt auto')
+    // hosxp = true: เฉพาะที่ออกจากโปรแกรม HOSxP เอง (computer ไม่ใช่ของ app นี้)
+    const financeCondition = opts.issued
+        ? "op.finance_number IS NOT NULL AND op.finance_number <> ''"
+        : "(op.finance_number IS NULL OR op.finance_number = '')";
+    const computerCondition = opts.hosxp
+        ? "(rd.computer IS NULL OR rd.computer <> 'App rcpt auto')"
+        : "rd.computer = 'App rcpt auto'";
+    const issuedJoin = opts.issued
+        ? `JOIN rcpt_debt rd ON rd.vn = i.an AND ${computerCondition} AND ${amountExpr} <> 0`
+        : '';
+    const issuedSelect = opts.issued ? ', rd.debt_id, rd.finance_number, rd.staff, rd.debt_date_time' : '';
+    const issuedGroupBy = opts.issued ? ', rd.debt_id, rd.finance_number, rd.staff, rd.debt_date_time' : '';
+
+    const baseSql = `SELECT i.an, i.hn, ${dchdateExpr} AS dchdate, i.dchtime, i.pttype,
+                pt.name AS pttype_name,
+                CONCAT(p.pname, p.fname, ' ', p.lname) AS patient_name,
+                SUM(CASE WHEN op.paidst = '02' THEN op.sum_price ELSE 0 END) AS debt_amount${issuedSelect}
+            FROM ipt i
+            JOIN patient p ON p.hn = i.hn
+            LEFT JOIN pttype pt ON pt.pttype = i.pttype
+            JOIN opitemrece op ON op.an = i.an
+            JOIN ipt_pttype ip ON ip.an = i.an AND ip.pttype = i.pttype
+            ${issuedJoin}
+            WHERE i.dchdate BETWEEN :date_start AND :date_end
+            ${pttypeCondition}
+            ${hnCondition}
+            ${debtHnCondition}
+            AND op.paidst = '02'
+            AND ${financeCondition}
+            GROUP BY i.an, i.hn, i.dchdate, i.dchtime, i.pttype, pt.name, p.pname, p.fname, p.lname${issuedGroupBy}
+            HAVING SUM(CASE WHEN op.paidst = '02' THEN op.sum_price ELSE 0 END) > 0`;
+
+    // รายชื่อที่ออกใบแจ้งหนี้แล้วด้วย app นี้ ("ออกด้วยระบบนี้") เรียงตาม dchdate, hn, an
+    // ส่วนรายการค้นหาปกติ/รายชื่อจาก HOSxP ยังคงเรียงตาม dchdate, dchtime, pttype, an เหมือนเดิม
+    const orderBy = (opts.issued && !opts.hosxp)
+        ? 'i.dchdate, i.hn, i.an'
+        : 'i.dchdate, i.dchtime, i.pttype, i.an';
+
+    return { baseSql, params, orderBy };
+}
+
+router.post('/patients_ipd', requireLogin, async (req, res) => {
+    const body = req.body || {};
+    await sendPaginatedPatients(buildIpdPatientsBaseQuery(body), body, res);
+});
+
+// รายชื่อผู้ป่วยในที่ออกใบแจ้งหนี้ด้วย app นี้แล้ว (สำหรับปุ่ม "ตรวจสอบรายชื่อคนที่ออกใบแจ้งหนี้แล้ว" ฝั่ง IPD)
+router.post('/patients_ipd_issued', requireLogin, async (req, res) => {
+    const body = req.body || {};
+    await sendPaginatedPatients(buildIpdPatientsBaseQuery(body, { issued: true }), body, res);
+});
+
+// รายชื่อผู้ป่วยในที่ออกใบแจ้งหนี้แล้วจากโปรแกรม HOSxP เอง (ไม่ใช่ออกด้วย app นี้)
+router.post('/patients_ipd_issued_hosxp', requireLogin, async (req, res) => {
+    const body = req.body || {};
+    await sendPaginatedPatients(buildIpdPatientsBaseQuery(body, { issued: true, hosxp: true }), body, res);
+});
+
+// คืนรายการ an + ยอดของผู้ป่วยในทั้งหมดที่ตรงเงื่อนไข (ไม่แบ่งหน้า) ใช้สำหรับ "เลือกทั้งหมด/ไม่เลือกทั้งหมด" ข้ามหน้าจอ
+router.post('/patients_ipd_vns', requireLogin, async (req, res) => {
+    const body = req.body || {};
+    const built = buildIpdPatientsBaseQuery(body);
+
+    if (built.error) {
+        res.json({ success: false, message: built.error });
+        return;
+    }
+
+    try {
+        const { baseSql, params } = built;
+        const sql = `SELECT an, debt_amount FROM (${baseSql}) t`;
+        const rows = await db.query(sql, params);
+        res.json({ success: true, data: rows });
+    } catch (e) {
+        res.json({ success: false, message: e.message });
+    }
+});
+
+// คืนรายการ an ทั้งหมดที่ออกใบแจ้งหนี้ด้วย app นี้แล้วตามเงื่อนไขที่ตรง (ไม่แบ่งหน้า) - "เลือกทั้งหมด" หน้ารายชื่อที่ออกแล้ว (IPD)
+router.post('/patients_ipd_issued_vns', requireLogin, async (req, res) => {
+    const body = req.body || {};
+    const built = buildIpdPatientsBaseQuery(body, { issued: true });
+
+    if (built.error) {
+        res.json({ success: false, message: built.error });
+        return;
+    }
+
+    try {
+        const { baseSql, params } = built;
+        const sql = `SELECT an FROM (${baseSql}) t`;
+        const rows = await db.query(sql, params);
+        res.json({ success: true, data: rows });
+    } catch (e) {
+        res.json({ success: false, message: e.message });
+    }
+});
+
+// คืนรายการ an ทั้งหมดที่ออกใบแจ้งหนี้จากโปรแกรม HOSxP เองตามเงื่อนไขที่ตรง (ไม่แบ่งหน้า) - "เลือกทั้งหมด" (IPD)
+router.post('/patients_ipd_issued_hosxp_vns', requireLogin, async (req, res) => {
+    const body = req.body || {};
+    const built = buildIpdPatientsBaseQuery(body, { issued: true, hosxp: true });
+
+    if (built.error) {
+        res.json({ success: false, message: built.error });
+        return;
+    }
+
+    try {
+        const { baseSql, params } = built;
+        const sql = `SELECT an FROM (${baseSql}) t`;
+        const rows = await db.query(sql, params);
+        res.json({ success: true, data: rows });
+    } catch (e) {
+        res.json({ success: false, message: e.message });
+    }
+});
+
 module.exports = router;

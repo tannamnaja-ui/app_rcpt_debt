@@ -12,10 +12,16 @@ app.use(session({
     cookie: { httpOnly: true },
 }));
 
+app.use('/api', (req, res, next) => {
+    console.log(new Date().toISOString(), req.method, req.originalUrl, JSON.stringify(req.body || {}));
+    next();
+});
+
 app.use('/api', require('./src/routes/config'));
 app.use('/api', require('./src/routes/auth'));
 app.use('/api', require('./src/routes/data'));
 app.use('/api', require('./src/routes/invoices'));
+app.use('/api', require('./src/routes/invoicesIpd'));
 
 app.use(express.static(path.join(__dirname, 'public')));
 

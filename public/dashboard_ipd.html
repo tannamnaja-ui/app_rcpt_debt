@@ -54,14 +54,6 @@
                     <label for="dateEnd">วันที่สิ้นสุด</label>
                     <input type="date" id="dateEnd">
                 </div>
-                <div class="form-group filter-time">
-                    <label for="timeStart">เวลาเริ่มต้น</label>
-                    <input type="text" id="timeStart" placeholder="HH:MM:SS" maxlength="8" inputmode="numeric" autocomplete="off">
-                </div>
-                <div class="form-group filter-time">
-                    <label for="timeEnd">เวลาสิ้นสุด</label>
-                    <input type="text" id="timeEnd" placeholder="HH:MM:SS" maxlength="8" inputmode="numeric" autocomplete="off">
-                </div>
             </div>
 
             <div class="form-actions">
@@ -105,12 +97,11 @@
                             <tr>
                                 <th>ลำดับ</th>
                                 <th><input type="checkbox" id="checkAll" checked></th>
-                                <th>VN</th>
+                                <th>AN</th>
                                 <th>HN</th>
                                 <th>ชื่อ-สกุล</th>
-                                <th>วันที่-เวลา ที่มารับบริการ</th>
+                                <th>วันที่-เวลาที่จำหน่าย (dchdate)</th>
                                 <th>สิทธิ</th>
-                                <th>เลขอนุมัติ (auth_code)</th>
                                 <th class="col-amount">ยอดออกใบแจ้งหนี้</th>
                                 <th>ดำเนินการ</th>
                             </tr>
@@ -134,12 +125,11 @@
                             <th>สถานะ</th>
                             <th>เลขที่ใบแจ้งหนี้ (finance_number)</th>
                             <th>debt_id</th>
-                            <th>VN</th>
+                            <th>AN</th>
                             <th>HN</th>
                             <th>ชื่อ-สกุล</th>
-                            <th>วันที่-เวลา ที่มารับบริการ</th>
+                            <th>วันที่-เวลาที่จำหน่าย</th>
                             <th>สิทธิ</th>
-                            <th>เลขอนุมัติ (auth_code)</th>
                             <th class="col-amount">ยอดออกใบแจ้งหนี้</th>
                             <th>รายละเอียด</th>
                         </tr>
@@ -180,12 +170,11 @@
                             <th>ลำดับ</th>
                             <th><input type="checkbox" id="checkAllIssued"></th>
                             <th>ดำเนินการ</th>
-                            <th>VN</th>
+                            <th>AN</th>
                             <th>HN</th>
                             <th>ชื่อ-สกุล</th>
-                            <th>วันที่-เวลา ที่มารับบริการ</th>
+                            <th>วันที่-เวลาที่จำหน่าย (dchdate)</th>
                             <th>สิทธิ</th>
-                            <th>เลขอนุมัติ (auth_code)</th>
                             <th class="col-amount">ยอดออก<br>ใบแจ้งหนี้</th>
                             <th>เลขที่ใบแจ้งหนี้ (finance_number)</th>
                             <th>debt_id</th>
@@ -271,6 +260,6 @@
         </div>
     </div>
 
-    <script src="assets/dashboard.js"></script>
+    <script src="assets/dashboard_ipd.js"></script>
 </body>
 </html>

@@ -119,6 +119,48 @@ input[type="radio"] {
     z-index: 1;
 }
 
+.menu-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1.5rem;
+    justify-content: center;
+    margin-top: 3rem;
+}
+
+.menu-card {
+    background: #fff;
+    border-radius: 20px;
+    box-shadow: 0 10px 35px rgba(139, 92, 246, 0.16);
+    padding: 3.5rem 2.5rem;
+    width: 380px;
+    text-align: center;
+    cursor: pointer;
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.menu-card:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 14px 40px rgba(139, 92, 246, 0.28);
+}
+
+.menu-card-icon {
+    font-size: 3.5rem;
+    margin-bottom: 1.25rem;
+}
+
+.menu-card-desc {
+    margin-top: 0.85rem;
+    font-size: 0.92rem;
+    line-height: 1.6;
+    color: var(--text-muted);
+}
+
+.menu-card-title {
+    font-size: 1.35rem;
+    font-weight: 700;
+    color: var(--purple-800);
+}
+
 .card-wide {
     max-width: 540px;
 }
