@@ -69,6 +69,7 @@
                 <button type="button" class="btn btn-primary" id="btnSearch">ค้นหา</button>
                 <button type="button" class="btn btn-secondary" id="btnCheckIssued">ตรวจสอบรายชื่อคนที่ออกใบแจ้งหนี้แล้ว</button>
                 <button type="button" class="btn btn-secondary" id="btnCheckIssuedHosxp">รายชื่อคนออกใบแจ้งหนี้แล้วจากโปรแกรม HOSxP</button>
+                <button type="button" class="btn btn-secondary" id="btnCheckCancelled">ประวัติการยกเลิกใบแจ้งหนี้</button>
             </div>
         </div>
 
@@ -200,6 +201,63 @@
                 <div id="issuedSummary" class="hint"></div>
             </div>
         </div>
+
+        <div class="card" id="cancelledSection" style="max-width:none; display:none;">
+            <h2>ประวัติการยกเลิกใบแจ้งหนี้</h2>
+            <div class="filter-row">
+                <div class="form-group filter-hn">
+                    <label for="cancelledHnFilter">ค้นหา HN</label>
+                    <input type="text" id="cancelledHnFilter" placeholder="ค้นหาด้วย HN" autocomplete="off">
+                </div>
+                <div class="form-group filter-date">
+                    <label for="cancelledDateStart">วันที่ยกเลิก เริ่มต้น</label>
+                    <input type="date" id="cancelledDateStart">
+                </div>
+                <div class="form-group filter-date">
+                    <label for="cancelledDateEnd">วันที่ยกเลิก สิ้นสุด</label>
+                    <input type="date" id="cancelledDateEnd">
+                </div>
+                <button type="button" class="btn btn-primary" id="btnCancelledSearch">ค้นหา</button>
+            </div>
+            <div class="pagination-controls page-size-bar">
+                <label for="cancelledPageSize">แสดงหน้าละ</label>
+                <select id="cancelledPageSize">
+                    <option value="20">20</option>
+                    <option value="50">50</option>
+                    <option value="100">100</option>
+                    <option value="200">200</option>
+                    <option value="500">500</option>
+                    <option value="1000">1000</option>
+                </select>
+                <button type="button" class="btn btn-secondary btn-sm" id="btnCancelledPrevPage">&laquo; ก่อนหน้า</button>
+                <span id="cancelledPageIndicator" class="hint"></span>
+                <button type="button" class="btn btn-secondary btn-sm" id="btnCancelledNextPage">ถัดไป &raquo;</button>
+            </div>
+            <div class="table-wrap">
+                <table class="data-table" id="cancelledTable">
+                    <thead>
+                        <tr>
+                            <th>ลำดับ</th>
+                            <th>VN</th>
+                            <th>HN</th>
+                            <th>ชื่อ-สกุล</th>
+                            <th>debt_id</th>
+                            <th>วันที่-เวลา ออกใบแจ้งหนี้</th>
+                            <th class="col-narrow">ผู้ออก<br>ใบแจ้งหนี้</th>
+                            <th class="col-amount">ส่วนลด</th>
+                            <th class="col-amount">ยอดรวม</th>
+                            <th>วันที่-เวลา ยกเลิก</th>
+                            <th class="col-narrow">ผู้ยกเลิก</th>
+                            <th>เหตุผลการยกเลิก</th>
+                        </tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+            <div class="pagination-bar">
+                <div id="cancelledSummary" class="hint"></div>
+            </div>
+        </div>
     </div>
 
     <div class="modal-overlay" id="confirmModal">
@@ -263,6 +321,10 @@
                         </tr>
                     </tfoot>
                 </table>
+            </div>
+            <div class="form-group">
+                <label for="cancelReason">เหตุผลการยกเลิก <span style="color:#c0392b">*</span></label>
+                <textarea id="cancelReason" rows="3" placeholder="ระบุเหตุผลการยกเลิกใบแจ้งหนี้"></textarea>
             </div>
             <div class="modal-actions">
                 <button type="button" class="btn btn-secondary" id="cancelModalCancel">ปิด</button>

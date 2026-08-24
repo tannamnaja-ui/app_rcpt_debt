@@ -37,6 +37,7 @@
     var cancelModalPatientInfo = document.getElementById('cancelModalPatientInfo');
     var cancelItemTableBody = document.querySelector('#cancelItemTable tbody');
     var cancelModalTotal = document.getElementById('cancelModalTotal');
+    var cancelReason = document.getElementById('cancelReason');
     var cancelModalCancel = document.getElementById('cancelModalCancel');
     var cancelModalConfirm = document.getElementById('cancelModalConfirm');
     var pageSizeSelect = document.getElementById('pageSize');
@@ -59,11 +60,25 @@
     var btnIssuedPrevPage = document.getElementById('btnIssuedPrevPage');
     var btnIssuedNextPage = document.getElementById('btnIssuedNextPage');
     var issuedPageIndicator = document.getElementById('issuedPageIndicator');
+    var btnCheckCancelled = document.getElementById('btnCheckCancelled');
+    var cancelledSection = document.getElementById('cancelledSection');
+    var cancelledHnFilter = document.getElementById('cancelledHnFilter');
+    var cancelledDateStart = document.getElementById('cancelledDateStart');
+    var cancelledDateEnd = document.getElementById('cancelledDateEnd');
+    var btnCancelledSearch = document.getElementById('btnCancelledSearch');
+    var cancelledTableBody = document.querySelector('#cancelledTable tbody');
+    var cancelledSummary = document.getElementById('cancelledSummary');
+    var cancelledPageSizeSelect = document.getElementById('cancelledPageSize');
+    var btnCancelledPrevPage = document.getElementById('btnCancelledPrevPage');
+    var btnCancelledNextPage = document.getElementById('btnCancelledNextPage');
+    var cancelledPageIndicator = document.getElementById('cancelledPageIndicator');
 
     var currentPage = 1;
     var totalPages = 1;
     var currentIssuedPage = 1;
     var totalIssuedPages = 1;
+    var currentCancelledPage = 1;
+    var totalCancelledPages = 1;
     var issuedSource = 'app'; // 'app' = ออกด้วย app นี้ / 'hosxp' = ออกจากโปรแกรม HOSxP เอง
     var selectedVns = {}; // vn -> { amount: number, checked: boolean } - คงสถานะการติ๊กเลือกข้ามหน้า
     var selectedIssuedVns = {}; // vn -> true - คงสถานะติ๊กเลือกยกเลิกใบแจ้งหนี้ข้ามหน้า
@@ -268,6 +283,7 @@
         cancelModalPatientInfo.textContent = patientLabel;
         cancelItemTableBody.innerHTML = '<tr><td colspan="3">กำลังโหลด...</td></tr>';
         cancelModalTotal.textContent = '';
+        cancelReason.value = '';
         cancelModalConfirm.disabled = true;
         cancelInvoiceModal.classList.add('open');
 
@@ -309,13 +325,20 @@
     }
 
     function doCancelInvoice(vn) {
+        var reason = cancelReason.value.trim();
+        if (!reason) {
+            alert('กรุณาระบุเหตุผลการยกเลิก');
+            cancelReason.focus();
+            return;
+        }
+
         cancelModalConfirm.disabled = true;
         cancelModalConfirm.textContent = 'กำลังดำเนินการ...';
 
         fetch('/api/cancel_invoice', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ vn: vn })
+            body: JSON.stringify({ vn: vn, reason: reason })
         })
             .then(function (res) { return res.json(); })
             .then(function (data) {
@@ -327,7 +350,7 @@
                 }
 
                 showAlert('ยกเลิกใบแจ้งหนี้สำเร็จ', 'success');
-                searchIssued(currentIssuedPage);
+                openCancelledSection();
             })
             .catch(function (err) {
                 alert('เกิดข้อผิดพลาด: ' + err.message);
@@ -784,6 +807,100 @@
         checkAllIssued.checked = boxes.length > 0 && boxes.every(function (cb) { return cb.checked; });
     }
 
+    // ---------- ประวัติการยกเลิกใบแจ้งหนี้ (rcpt_debt_cancel) ----------
+    function updateCancelledPagination(page, pages) {
+        currentCancelledPage = page;
+        totalCancelledPages = pages;
+        cancelledPageIndicator.textContent = 'หน้า ' + page + ' / ' + pages;
+        btnCancelledPrevPage.disabled = page <= 1;
+        btnCancelledNextPage.disabled = page >= pages;
+    }
+
+    function renderCancelled(rows, totalCount, totalAmount, page, pageSize) {
+        cancelledTableBody.innerHTML = '';
+
+        if (rows.length === 0) {
+            cancelledSummary.textContent = 'ไม่พบประวัติการยกเลิกใบแจ้งหนี้ตามเงื่อนไขที่เลือก';
+            return;
+        }
+
+        var startIndex = (page - 1) * pageSize;
+
+        rows.forEach(function (row, index) {
+            var tr = document.createElement('tr');
+
+            tr.appendChild(makeCell(startIndex + index + 1));
+            tr.appendChild(makeCell(row.vn));
+            tr.appendChild(makeCell(row.hn));
+            tr.appendChild(makeCell(row.patient_name));
+            tr.appendChild(makeCell(row.debt_id));
+            tr.appendChild(makeCell(formatVisitDateTime(row.debt_date, row.debt_time)));
+
+            var tdStaff = makeCell(row.staff);
+            tdStaff.className = 'col-narrow';
+            tr.appendChild(tdStaff);
+
+            var tdDiscount = makeCell(formatMoney(row.discount_amount));
+            tdDiscount.className = 'col-amount';
+            tr.appendChild(tdDiscount);
+
+            var tdAmount = makeCell(formatMoney(row.total_amount));
+            tdAmount.className = 'col-amount';
+            tr.appendChild(tdAmount);
+
+            tr.appendChild(makeCell(formatDebtDateTime(row.cancel_datetime)));
+
+            var tdCancelStaff = makeCell(row.cancel_staff);
+            tdCancelStaff.className = 'col-narrow';
+            tr.appendChild(tdCancelStaff);
+
+            tr.appendChild(makeCell(row.reason));
+
+            cancelledTableBody.appendChild(tr);
+        });
+
+        cancelledSummary.textContent = 'พบทั้งหมด ' + totalCount + ' รายการ ยอดรวม ' + formatMoney(totalAmount) + ' บาท';
+    }
+
+    function searchCancelled(page) {
+        cancelledSummary.textContent = 'กำลังค้นหา...';
+        cancelledTableBody.innerHTML = '';
+
+        fetch('/api/cancelled_invoices', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                hn: cancelledHnFilter.value.trim(),
+                date_start: cancelledDateStart.value,
+                date_end: cancelledDateEnd.value,
+                page: page || 1,
+                page_size: parseInt(cancelledPageSizeSelect.value, 10)
+            })
+        })
+            .then(function (res) { return res.json(); })
+            .then(function (data) {
+                if (!data.success) {
+                    cancelledSummary.textContent = 'เกิดข้อผิดพลาด: ' + data.message;
+                    updateCancelledPagination(1, 1);
+                    return;
+                }
+                renderCancelled(data.data, data.total_count, data.total_amount, data.page, data.page_size);
+                updateCancelledPagination(data.page, data.total_pages);
+            })
+            .catch(function (err) {
+                cancelledSummary.textContent = 'เกิดข้อผิดพลาด: ' + err.message;
+            });
+    }
+
+    // เปิดส่วน "ประวัติการยกเลิกใบแจ้งหนี้" และ refresh ทุกครั้งที่เรียก (ใช้ตอนกดปุ่มดูประวัติ และหลังยกเลิกสำเร็จ)
+    function openCancelledSection() {
+        issuedSection.style.display = 'none';
+        resultSection.style.display = 'none';
+        cancelledSection.style.display = '';
+        setPatientListCollapsed(true);
+        searchCancelled(1);
+    }
+
     function doCancelSelectedIssued(vns) {
         btnCancelSelectedIssued.disabled = true;
         btnCancelSelectedIssued.textContent = 'กำลังดำเนินการ...';
@@ -803,7 +920,7 @@
                 // ยกเลิกสำเร็จ - ล้างสถานะที่เลือกไว้ของ VN เหล่านี้ทิ้ง (ครอบคลุมทุกหน้า ไม่ใช่แค่หน้าปัจจุบัน)
                 vns.forEach(function (vn) { delete selectedIssuedVns[vn]; });
                 showAlert(data.message, 'success');
-                searchIssued(currentIssuedPage);
+                openCancelledSection();
             })
             .catch(function (err) {
                 alert('เกิดข้อผิดพลาด: ' + err.message);
@@ -1049,6 +1166,19 @@
 
     btnCheckIssuedHosxp.addEventListener('click', function () {
         toggleIssuedSection('hosxp', 'รายชื่อผู้ป่วยที่ออกใบแจ้งหนี้แล้ว (ออกจากโปรแกรม HOSxP)');
+    });
+
+    btnCheckCancelled.addEventListener('click', openCancelledSection);
+    btnCancelledSearch.addEventListener('click', function () { searchCancelled(1); });
+    cancelledHnFilter.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter') searchCancelled(1);
+    });
+    cancelledPageSizeSelect.addEventListener('change', function () { searchCancelled(1); });
+    btnCancelledPrevPage.addEventListener('click', function () {
+        if (currentCancelledPage > 1) searchCancelled(currentCancelledPage - 1);
+    });
+    btnCancelledNextPage.addEventListener('click', function () {
+        if (currentCancelledPage < totalCancelledPages) searchCancelled(currentCancelledPage + 1);
     });
 
     // ค้นหา HN เฉพาะในส่วนรายชื่อที่ออกใบแจ้งหนี้แล้ว (ค้นหาจาก rcpt_debt.hn แยกจากช่อง HN ในตัวกรองค้นหาหลัก)

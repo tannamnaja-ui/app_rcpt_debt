@@ -294,43 +294,66 @@ async function fetchVnByAn(conn, an) {
     return rows.length > 0 ? rows[0].vn : null;
 }
 
+// สร้างชุด placeholder :prefix0, :prefix1, ... สำหรับ IN (...) พร้อมยัดค่าเข้า params
+// ใช้แทน IN (SELECT ...) เพราะ MySQL ไม่แปลง subquery ใน UPDATE/DELETE เป็น semi-join
+// ทำให้กลายเป็น DEPENDENT SUBQUERY -> สแกนทั้งตารางจนค้าง (ดู buildInList ใน invoiceService.js)
+function buildInListIpd(values, params, prefix) {
+    return values
+        .map(function (value, i) {
+            const key = prefix + i;
+            params[key] = value;
+            return ':' + key;
+        })
+        .join(', ');
+}
+
 // 1) ยกเลิกลูกหนี้ — เคลียร์ยอดและตั้งสถานะ ABORT ที่ rcpt_debt/rcpt_debt_detail (rcpt_debt.vn เก็บค่า an ของ IPD ไว้ตรงๆ)
 async function step1CancelDebtIpd(conn, an) {
-    await conn.query("UPDATE rcpt_debt SET amount = 0 WHERE vn = :an", { an });
-    await conn.query("UPDATE rcpt_debt SET total_amount = 0 WHERE vn = :an", { an });
-    await conn.query("UPDATE rcpt_debt SET status = 'ABORT' WHERE vn = :an", { an });
+    // อ่าน debt_id มาก่อนแล้วส่งเป็น IN (...) แทน IN (SELECT ...) เพราะ MySQL ไม่แปลง subquery
+    // ใน UPDATE เป็น semi-join ทำให้สแกน rcpt_debt_detail ทั้งตารางจนค้าง (PostgreSQL ไม่มีอาการนี้)
+    const debtRows = await conn.query('SELECT debt_id FROM rcpt_debt WHERE vn = :an', { an });
+    if (debtRows.length === 0) return;
 
     await conn.query(
-        `UPDATE rcpt_debt_detail SET amount = 0
-        WHERE debt_id IN (SELECT debt_id FROM rcpt_debt WHERE vn = :an)`,
+        "UPDATE rcpt_debt SET amount = 0, total_amount = 0, status = 'ABORT' WHERE vn = :an",
         { an }
     );
+
+    const params = {};
+    const idList = buildInListIpd(debtRows.map(function (r) { return r.debt_id; }), params, 'debt_id');
+
     await conn.query(
-        `UPDATE rcpt_debt_detail SET total_amount = 0
-        WHERE debt_id IN (SELECT debt_id FROM rcpt_debt WHERE vn = :an)`,
-        { an }
+        `UPDATE rcpt_debt_detail SET amount = 0, total_amount = 0
+        WHERE debt_id IN (${idList})`,
+        params
     );
 }
 
 // 2) ยกเลิกโอน — ลบรายการโอน/เคลียร์หนี้ที่เปิดไว้ตอนออกใบแจ้งหนี้ (ตาราง ipt_opi_fn_* อ้างอิงด้วย an โดยตรง)
 async function step2CancelTransferIpd(conn, an) {
-    await conn.query(
-        `UPDATE ipt_opi_fn_cr_detail SET hos_guid = 'Y'
-        WHERE ipt_opi_fn_cr_list_id IN (
-            SELECT ipt_opi_fn_cr_list_id FROM ipt_opi_fn_cr_list WHERE an = :an
-        )
-        AND amount_paidst_03 IS NULL`,
+    const crRows = await conn.query(
+        'SELECT ipt_opi_fn_cr_list_id FROM ipt_opi_fn_cr_list WHERE an = :an',
         { an }
     );
 
-    await conn.query(
-        `DELETE FROM ipt_opi_fn_cr_detail
-        WHERE ipt_opi_fn_cr_list_id IN (
-            SELECT ipt_opi_fn_cr_list_id FROM ipt_opi_fn_cr_list WHERE an = :an
-        )
-        AND amount_paidst_03 IS NULL`,
-        { an }
-    );
+    if (crRows.length > 0) {
+        const crParams = {};
+        const crList = buildInListIpd(crRows.map(function (r) { return r.ipt_opi_fn_cr_list_id; }), crParams, 'cr');
+
+        await conn.query(
+            `UPDATE ipt_opi_fn_cr_detail SET hos_guid = 'Y'
+            WHERE ipt_opi_fn_cr_list_id IN (${crList})
+            AND amount_paidst_03 IS NULL`,
+            crParams
+        );
+
+        await conn.query(
+            `DELETE FROM ipt_opi_fn_cr_detail
+            WHERE ipt_opi_fn_cr_list_id IN (${crList})
+            AND amount_paidst_03 IS NULL`,
+            crParams
+        );
+    }
 
     await conn.query(`DELETE FROM ipt_opi_fn_cr_list WHERE an = :an`, { an });
 
@@ -343,14 +366,22 @@ async function step2CancelTransferIpd(conn, an) {
         { an }
     );
 
-    await conn.query(
-        `DELETE FROM ipt_opi_fn_tr_detail
-        WHERE ipt_opi_fn_tr_list_id IN (
-            SELECT ipt_opi_fn_tr_list_id FROM ipt_opi_fn_tr_list WHERE an = :an
-        )
-        AND amount_paidst_03 = 0`,
+    const trRows = await conn.query(
+        'SELECT ipt_opi_fn_tr_list_id FROM ipt_opi_fn_tr_list WHERE an = :an',
         { an }
     );
+
+    if (trRows.length > 0) {
+        const trParams = {};
+        const trList = buildInListIpd(trRows.map(function (r) { return r.ipt_opi_fn_tr_list_id; }), trParams, 'tr');
+
+        await conn.query(
+            `DELETE FROM ipt_opi_fn_tr_detail
+            WHERE ipt_opi_fn_tr_list_id IN (${trList})
+            AND amount_paidst_03 = 0`,
+            trParams
+        );
+    }
 
     await conn.query(`DELETE FROM ipt_opi_fn_tr_list WHERE an = :an`, { an });
 }

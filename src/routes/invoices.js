@@ -107,21 +107,31 @@ router.get('/debt_info/:vn', requireLogin, async (req, res) => {
 });
 
 // ยกเลิกใบแจ้งหนี้ของ VN (3 ขั้นตอน: ยกเลิกลูกหนี้ / ยกเลิกโอน / คืนค่าให้ใบสั่งยา)
+// ต้องระบุเหตุผลการยกเลิก - บันทึกลง rcpt_debt_cancel ก่อนเริ่มขั้นตอนยกเลิกจริง (step0LogCancel)
 router.post('/cancel_invoice', requireLogin, async (req, res) => {
     const body = req.body || {};
     const vn = String(body.vn || '').trim();
+    const reason = String(body.reason || '').trim();
 
     if (!vn) {
         res.json({ success: false, message: 'ไม่พบ VN' });
         return;
     }
 
+    if (!reason) {
+        res.json({ success: false, message: 'กรุณาระบุเหตุผลการยกเลิก' });
+        return;
+    }
+
     let conn;
 
     try {
+        await warmUpSerials();
+        const cancelStaff = req.session.officer.officer_login_name;
+
         conn = await db.getConnection();
         await conn.beginTransaction();
-        await runCancelInvoiceSteps(conn, vn);
+        await runCancelInvoiceSteps(conn, vn, reason, cancelStaff);
         await conn.commit();
         res.json({ success: true, vn, message: 'ยกเลิกใบแจ้งหนี้สำเร็จ' });
     } catch (e) {
@@ -144,6 +154,7 @@ router.post('/cancel_invoice', requireLogin, async (req, res) => {
 router.post('/cancel_invoices', requireLogin, async (req, res) => {
     const body = req.body || {};
     const vns = Array.isArray(body.vn) ? body.vn : [];
+    const reason = String(body.reason || '').trim();
 
     if (vns.length === 0) {
         res.json({ success: false, message: 'กรุณาเลือกรายการอย่างน้อย 1 รายการ' });
@@ -154,11 +165,14 @@ router.post('/cancel_invoices', requireLogin, async (req, res) => {
     let conn;
 
     try {
+        await warmUpSerials();
+        const cancelStaff = req.session.officer.officer_login_name;
+
         conn = await db.getConnection();
         await conn.beginTransaction();
 
         for (const vn of vnList) {
-            await runCancelInvoiceSteps(conn, vn);
+            await runCancelInvoiceSteps(conn, vn, reason, cancelStaff);
         }
 
         await conn.commit();
@@ -193,6 +207,7 @@ const REQUIRED_SERIAL_NAMES = [
     'finance_number',
     'opd_opi_fn_cr_detail_id',
     'rcpt_debt_id',
+    'rcpt_debt_cancel_id',
 ];
 const warmedSerials = new Set();
 

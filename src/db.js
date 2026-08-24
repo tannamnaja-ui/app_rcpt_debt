@@ -186,6 +186,15 @@ async function getConnection() {
     }
 
     const conn = await getMysqlPool().getConnection();
+
+    // กันหน้าจอค้างไม่รู้จบเมื่อแถวถูกล็อกค้างโดยผู้ใช้ HOSxP เครื่องอื่น
+    // ให้รอไม่เกิน 30 วินาทีแล้วโยน error ออกมาให้ผู้ใช้เห็นแทน (ค่า default ของบางเซิร์ฟเวอร์ตั้งไว้สูงมาก)
+    try {
+        await conn.query('SET SESSION innodb_lock_wait_timeout = 30');
+    } catch (e) {
+        // ไม่รองรับตัวแปรนี้ก็ข้ามไป
+    }
+
     return {
         type: 'mysql',
         async query(sql, p) {

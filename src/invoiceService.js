@@ -255,104 +255,164 @@ async function getDebtId(conn, vn, dbType, financeNumber) {
     return fetchDebtId(conn, vn, dbType, financeNumber);
 }
 
+// สร้างชุด placeholder :prefix0, :prefix1, ... สำหรับ IN (...) พร้อมยัดค่าเข้า params
+// ใช้แทนการเขียน IN (SELECT ...) เพราะ MySQL (5.x/5.7) ไม่แปลง subquery ใน UPDATE/DELETE
+// เป็น semi-join ทำให้กลายเป็น DEPENDENT SUBQUERY -> สแกนทั้งตาราง (opitemrece มีหลายสิบล้านแถว)
+// จนค้างและล็อกแถวจำนวนมาก ส่วน PostgreSQL แปลงเป็น semi-join ให้เองจึงไม่มีอาการนี้
+function buildInList(values, params, prefix) {
+    return values
+        .map(function (value, i) {
+            const key = prefix + i;
+            params[key] = value;
+            return ':' + key;
+        })
+        .join(', ');
+}
+
+// 0) บันทึกประวัติการยกเลิกลง rcpt_debt_cancel ก่อนที่ step1 จะเคลียร์ยอดใน rcpt_debt เป็น 0
+// (ต้องอ่านค่า amount/total_amount/discount_amount ของใบแจ้งหนี้เดิมไว้ก่อนถูกล้าง)
+async function step0LogCancel(conn, debts, reason, cancelStaff) {
+    for (const d of debts) {
+        const idRows = await conn.query("SELECT get_serialnumber('rcpt_debt_cancel_id') AS id");
+
+        await conn.query(
+            `INSERT INTO rcpt_debt_cancel
+                (debt_cancel_id, debt_id, vn, hn, debt_date, debt_time, cancel_datetime,
+                 staff, cancel_staff, amount, pt_type, computer, cancel_computer,
+                 discount_amount, total_amount, reason)
+            VALUES
+                (:debt_cancel_id, :debt_id, :vn, :hn, :debt_date, :debt_time, CURRENT_TIMESTAMP,
+                 :staff, :cancel_staff, :amount, :pt_type, :computer, :cancel_computer,
+                 :discount_amount, :total_amount, :reason)`,
+            {
+                debt_cancel_id: idRows[0].id,
+                debt_id: d.debt_id,
+                vn: d.vn,
+                hn: d.hn,
+                debt_date: d.debt_date,
+                debt_time: d.debt_time,
+                staff: d.staff,
+                cancel_staff: cancelStaff,
+                amount: d.amount,
+                pt_type: d.pt_type,
+                computer: d.computer,
+                cancel_computer: 'App rcpt auto',
+                discount_amount: d.discount_amount,
+                total_amount: d.total_amount,
+                reason: reason || '',
+            }
+        );
+    }
+}
+
 /**
  * 3 ขั้นตอนของกระบวนการ "ยกเลิกใบแจ้งหนี้" (cancel debt invoice) สำหรับ 1 VN
  * ผู้เรียกเป็นคนคุม begin/commit/rollback (transaction เดียวกัน)
+ * reason/cancelStaff ใช้บันทึกลง rcpt_debt_cancel ก่อนเริ่มขั้นตอนยกเลิกจริง
+ * อ่าน rcpt_debt ของ VN นี้ครั้งเดียวแล้วส่ง debt_id ต่อให้ทุกขั้นตอน แทนการใช้ subquery ซ้ำ ๆ
  */
-async function runCancelInvoiceSteps(conn, vn) {
-    await step1CancelDebt(conn, vn);
-    await step2CancelTransfer(conn, vn);
-    await step3RevertOrderItems(conn, vn);
+async function runCancelInvoiceSteps(conn, vn, reason, cancelStaff) {
+    const debts = await conn.query(
+        `SELECT debt_id, vn, hn, debt_date, debt_time, staff, amount, pt_type,
+            computer, discount_amount, total_amount, status
+        FROM rcpt_debt
+        WHERE vn = :vn`,
+        { vn }
+    );
+
+    const activeDebts = debts.filter(function (d) { return d.status !== 'ABORT'; });
+    const debtIds = debts.map(function (d) { return d.debt_id; });
+
+    await step0LogCancel(conn, activeDebts, reason, cancelStaff);
+    await step1CancelDebt(conn, vn, debtIds);
+    await step2CancelTransfer(conn, vn, debts.length > 0);
+    await step3RevertOrderItems(conn, vn, debts.length > 0);
 }
 
 // 1) ยกเลิกลูกหนี้ — เคลียร์ยอดและตั้งสถานะ ABORT ที่ rcpt_debt/rcpt_debt_detail
-async function step1CancelDebt(conn, vn) {
-    await conn.query("UPDATE rcpt_debt SET amount = 0 WHERE vn = :vn", { vn });
-    await conn.query("UPDATE rcpt_debt SET total_amount = 0 WHERE vn = :vn", { vn });
-    await conn.query("UPDATE rcpt_debt SET status = 'ABORT' WHERE vn = :vn", { vn });
+async function step1CancelDebt(conn, vn, debtIds) {
+    if (debtIds.length === 0) return;
 
     await conn.query(
-        `UPDATE rcpt_debt_detail SET amount = 0
-        WHERE debt_id IN (SELECT debt_id FROM rcpt_debt WHERE vn = :vn)`,
+        "UPDATE rcpt_debt SET amount = 0, total_amount = 0, status = 'ABORT' WHERE vn = :vn",
         { vn }
     );
+
+    const params = {};
+    const idList = buildInList(debtIds, params, 'debt_id');
     await conn.query(
-        `UPDATE rcpt_debt_detail SET total_amount = 0
-        WHERE debt_id IN (SELECT debt_id FROM rcpt_debt WHERE vn = :vn)`,
-        { vn }
+        `UPDATE rcpt_debt_detail SET amount = 0, total_amount = 0
+        WHERE debt_id IN (${idList})`,
+        params
     );
 }
 
 // 2) ยกเลิกโอน — ลบรายการโอน/เคลียร์หนี้ที่เปิดไว้ตอนออกใบแจ้งหนี้
-async function step2CancelTransfer(conn, vn) {
-    await conn.query(
-        `UPDATE opd_opi_fn_cr_detail SET hos_guid = 'Y'
-        WHERE opd_opi_fn_cr_list_id IN (
-            SELECT opd_opi_fn_cr_list_id FROM opd_opi_fn_cr_list
-            WHERE vn IN (SELECT vn FROM rcpt_debt WHERE vn = :vn)
-        )
-        AND amount_paidst_03 IS NULL`,
-        { vn }
-    );
+async function step2CancelTransfer(conn, vn, hasDebt) {
+    if (!hasDebt) return;
 
-    await conn.query(
-        `DELETE FROM opd_opi_fn_cr_detail
-        WHERE opd_opi_fn_cr_list_id IN (
-            SELECT opd_opi_fn_cr_list_id FROM opd_opi_fn_cr_list
-            WHERE vn IN (SELECT vn FROM rcpt_debt WHERE vn = :vn)
-        )
-        AND amount_paidst_03 IS NULL`,
+    const crRows = await conn.query(
+        'SELECT opd_opi_fn_cr_list_id FROM opd_opi_fn_cr_list WHERE vn = :vn',
         { vn }
     );
+    const crIds = crRows.map(function (r) { return r.opd_opi_fn_cr_list_id; });
 
-    await conn.query(
-        `DELETE FROM opd_opi_fn_cr_list WHERE vn IN (SELECT vn FROM rcpt_debt WHERE vn = :vn)`,
-        { vn }
-    );
+    if (crIds.length > 0) {
+        const crParams = {};
+        const crList = buildInList(crIds, crParams, 'cr');
+        await conn.query(
+            `UPDATE opd_opi_fn_cr_detail SET hos_guid = 'Y'
+            WHERE opd_opi_fn_cr_list_id IN (${crList})
+            AND amount_paidst_03 IS NULL`,
+            crParams
+        );
+        await conn.query(
+            `DELETE FROM opd_opi_fn_cr_detail
+            WHERE opd_opi_fn_cr_list_id IN (${crList})
+            AND amount_paidst_03 IS NULL`,
+            crParams
+        );
+    }
 
-    await conn.query(
-        `DELETE FROM opd_opi_fn_tr_detail
-        WHERE opd_opi_fn_tr_list_id IN (
-            SELECT opd_opi_fn_tr_list_id FROM opd_opi_fn_tr_list
-            WHERE vn IN (SELECT vn FROM rcpt_debt WHERE vn = :vn)
-        )
-        AND amount_paidst_03 = 0`,
-        { vn }
-    );
+    await conn.query('DELETE FROM opd_opi_fn_cr_list WHERE vn = :vn', { vn });
 
-    await conn.query(
-        `DELETE FROM opd_opi_fn_tr_list WHERE vn IN (SELECT vn FROM rcpt_debt WHERE vn = :vn)`,
+    const trRows = await conn.query(
+        'SELECT opd_opi_fn_tr_list_id FROM opd_opi_fn_tr_list WHERE vn = :vn',
         { vn }
     );
+    const trIds = trRows.map(function (r) { return r.opd_opi_fn_tr_list_id; });
+
+    if (trIds.length > 0) {
+        const trParams = {};
+        const trList = buildInList(trIds, trParams, 'tr');
+        await conn.query(
+            `DELETE FROM opd_opi_fn_tr_detail
+            WHERE opd_opi_fn_tr_list_id IN (${trList})
+            AND amount_paidst_03 = 0`,
+            trParams
+        );
+    }
+
+    await conn.query('DELETE FROM opd_opi_fn_tr_list WHERE vn = :vn', { vn });
 }
 
 // 3) คืนค่าให้ใบสั่งยา/รายการที่ยังไม่ผ่านการเงิน ให้กลับมาออกใบแจ้งหนี้ใหม่ได้
-async function step3RevertOrderItems(conn, vn) {
-    await conn.query(
-        `UPDATE opitemrece SET finance_number = NULL
-        WHERE vn IN (SELECT vn FROM rcpt_debt WHERE vn = :vn)
-        AND paidst NOT IN ('01', '03')`,
-        { vn }
-    );
+async function step3RevertOrderItems(conn, vn, hasDebt) {
+    if (hasDebt) {
+        await conn.query(
+            `UPDATE opitemrece SET finance_number = NULL
+            WHERE vn = :vn AND paidst NOT IN ('01', '03')`,
+            { vn }
+        );
 
-    await conn.query(
-        `UPDATE opitemrece SET opi_doctor_finance_type_id = NULL
-        WHERE vn IN (SELECT vn FROM rcpt_debt WHERE vn = :vn)
-        AND finance_number IS NULL`,
-        { vn }
-    );
+        await conn.query(
+            `UPDATE opitemrece SET opi_doctor_finance_type_id = NULL, node_id = NULL
+            WHERE vn = :vn AND finance_number IS NULL`,
+            { vn }
+        );
 
-    await conn.query(
-        `UPDATE opitemrece SET node_id = NULL
-        WHERE vn IN (SELECT vn FROM rcpt_debt WHERE vn = :vn)
-        AND finance_number IS NULL`,
-        { vn }
-    );
-
-    await conn.query(
-        `DELETE FROM opd_opi_hos_guid_transfer WHERE vn IN (SELECT vn FROM rcpt_debt WHERE vn = :vn)`,
-        { vn }
-    );
+        await conn.query('DELETE FROM opd_opi_hos_guid_transfer WHERE vn = :vn', { vn });
+    }
 
     await conn.query("UPDATE ovst SET finance_lock = 'N' WHERE vn = :vn", { vn });
     await conn.query("UPDATE visit_pttype SET finance_clear_ok = 'Y' WHERE vn = :vn", { vn });

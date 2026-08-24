@@ -181,7 +181,8 @@ input[type="radio"] {
 .form-group input[type="text"],
 .form-group input[type="password"],
 .form-group input[type="date"],
-.form-group select {
+.form-group select,
+.form-group textarea {
     width: 100%;
     padding: 0.6rem 0.8rem;
     border: 1.5px solid var(--border-soft);
@@ -190,12 +191,15 @@ input[type="radio"] {
     background: var(--purple-50);
     color: var(--text-main);
     transition: border-color 0.15s, box-shadow 0.15s, background-color 0.15s;
+    font-family: inherit;
+    resize: vertical;
 }
 
 .form-group input[type="text"]:focus,
 .form-group input[type="password"]:focus,
 .form-group input[type="date"]:focus,
-.form-group select:focus {
+.form-group select:focus,
+.form-group textarea:focus {
     outline: none;
     border-color: var(--purple-400);
     background: #fff;

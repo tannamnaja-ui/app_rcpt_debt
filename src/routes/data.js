@@ -262,6 +262,81 @@ router.post('/patients_issued_hosxp_vns', requireLogin, async (req, res) => {
     }
 });
 
+// ประวัติการยกเลิกใบแจ้งหนี้ (rcpt_debt_cancel) - filter ตามวันที่ยกเลิก (cancel_datetime) และ HN
+// ไม่บังคับกรอกวันที่ - ถ้าไม่ระบุช่วงวันที่เลยจะแสดงประวัติทั้งหมด
+router.post('/cancelled_invoices', requireLogin, async (req, res) => {
+    const body = req.body || {};
+    const hn = String(body.hn || '').trim();
+    const dateStart = String(body.date_start || '');
+    const dateEnd = String(body.date_end || '');
+
+    const params = {};
+    let dateCondition = '';
+    if (dateStart || dateEnd) {
+        if (!DATE_REGEX.test(dateStart) || !DATE_REGEX.test(dateEnd)) {
+            res.json({ success: false, message: 'รูปแบบวันที่ไม่ถูกต้อง' });
+            return;
+        }
+        const isPg = db.getType() === 'pgsql';
+        const cancelDateExpr = isPg ? 'CAST(rc.cancel_datetime AS DATE)' : 'DATE(rc.cancel_datetime)';
+        params.date_start = dateStart;
+        params.date_end = dateEnd;
+        dateCondition = `AND ${cancelDateExpr} BETWEEN :date_start AND :date_end`;
+    }
+
+    let hnCondition = '';
+    if (hn) {
+        params.hn = hn;
+        hnCondition = 'AND rc.hn = :hn';
+    }
+
+    let page = parseInt(body.page, 10);
+    if (!Number.isInteger(page) || page < 1) page = 1;
+
+    let pageSize = parseInt(body.page_size, 10);
+    if (!PAGE_SIZES.includes(pageSize)) pageSize = PAGE_SIZES[0];
+
+    try {
+        // debt_date เป็นคอลัมน์ DATE ล้วน ต้อง TO_CHAR/DATE_FORMAT เป็น text ตรงๆ
+        // กันไม่ให้ driver แปลงเป็น JS Date แล้วเลื่อนวันผิดตาม timezone (เหมือน vstdateExpr ใน buildPatientsBaseQuery)
+        const isPgDate = db.getType() === 'pgsql';
+        const debtDateExpr = isPgDate
+            ? "TO_CHAR(rc.debt_date, 'YYYY-MM-DD')"
+            : "DATE_FORMAT(rc.debt_date, '%Y-%m-%d')";
+
+        const baseSql = `SELECT rc.debt_cancel_id, rc.debt_id, rc.vn, rc.hn,
+                    CONCAT(p.pname, p.fname, ' ', p.lname) AS patient_name,
+                    ${debtDateExpr} AS debt_date, rc.debt_time, rc.staff,
+                    rc.cancel_datetime, rc.cancel_staff,
+                    rc.amount, rc.discount_amount, rc.total_amount, rc.reason
+                FROM rcpt_debt_cancel rc
+                JOIN patient p ON p.hn = rc.hn
+                WHERE 1=1 ${hnCondition} ${dateCondition}`;
+
+        const countSql = `SELECT COUNT(*) AS total_count, COALESCE(SUM(total_amount), 0) AS total_amount FROM (${baseSql}) t`;
+        const countRows = await db.query(countSql, params);
+        const totalCount = parseInt(countRows[0].total_count, 10) || 0;
+        const totalAmount = countRows[0].total_amount || 0;
+        const totalPages = totalCount > 0 ? Math.ceil(totalCount / pageSize) : 1;
+
+        const pageParams = Object.assign({}, params, { limit_n: pageSize, offset_n: (page - 1) * pageSize });
+        const pageSql = `${baseSql} ORDER BY rc.cancel_datetime DESC, rc.debt_cancel_id DESC LIMIT :limit_n OFFSET :offset_n`;
+        const rows = await db.query(pageSql, pageParams);
+
+        res.json({
+            success: true,
+            data: rows,
+            total_count: totalCount,
+            total_amount: totalAmount,
+            page,
+            page_size: pageSize,
+            total_pages: totalPages,
+        });
+    } catch (e) {
+        res.json({ success: false, message: e.message });
+    }
+});
+
 // ค้นหารายชื่อผู้ป่วยใน (IPD) ที่ยังไม่ออกใบแจ้งหนี้ - ใช้วันที่จำหน่าย (ipt.dchdate) แทนวันที่เปิด visit
 // ไม่มีตัวกรองช่วงเวลา (time) เหมือนฝั่ง OPD เพราะ dchdate เป็นระดับวัน ไม่ใช่ระดับเวลา
 // opts.issued/opts.hosxp ใช้ค้นรายชื่อที่ออกใบแจ้งหนี้แล้ว (เหมือนฝั่ง OPD ใน buildPatientsBaseQuery)
